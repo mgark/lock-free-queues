@@ -32,7 +32,7 @@ struct alignas(128) ConsumerBase
   size_t consumer_id;
   size_t next_checkout_point_idx_;
   size_t items_per_batch_;
-  std::atomic_bool slow_consumer_;
+  std::atomic_bool slow_consumer_;//TODO: not implemented fully yet
 
   ConsumerBase(Queue& q) : q_(q), n_(q_.size()), idx_mask_(n_ - 1), slow_consumer_(false)
   {
