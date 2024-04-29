@@ -10,4 +10,6 @@ It is pretty pretty fast.
 
 - implement slow consumer handling by allowing ring queue to grow dynamically - up to a limit. Also with this feature you'd get pretty much unbounded queue as well and it would be very fast.
 - benchmark against other implementations, including Java's Distruptor
-- micro optimizations for optimal assembly output
+- micro optimizations for optimal assembly output including relaxing some of the atomics
+- test the queues on the devices with weak memory ordering to catch any possible race condition
+- use Race Relay detector to spot any tricky race condition
