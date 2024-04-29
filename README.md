@@ -18,7 +18,6 @@ Also sequential publishing is supported for multi-producer scenario with a compi
 - dynamic consumers join / detach
 - single producer / consumer interface for all kinds of queues
 - sequential mutti-publishers supported
-- [in reliable delivery mode] if there is no consumer attached to the queue, producers would just keep pushing...only when there is at least one consumer, producer would be blocked
 - it is pretty pretty fast.
 - multiple compile-time tweaks
 - supports reading data through input iterators
