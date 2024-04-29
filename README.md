@@ -8,7 +8,8 @@ Also sequential publishing is supported for multi-producer scenario with a compi
 # Requirements 
 
 - at least C++20 to work and gcc - got issues with aggregate initializaiton on clang (would address later)
-- CMake
+- Catch2 for tests
+- CMake for building
 
 # Features
 
