@@ -1,0 +1,306 @@
+#pragma once
+
+#include "detail/spin_lock.h"
+#include "spmc_bounded_queue_base.h"
+
+template <class T, ProducerKind producerKind = ProducerKind::Unordered, size_t _MAX_CONSUMER_N_ = 8, class Allocator = std::allocator<T>>
+class SPMCBoundedQueue
+  : public SPMCBoundedQueueBase<T, SPMCBoundedQueue<T, producerKind, _MAX_CONSUMER_N_, Allocator>, producerKind, _MAX_CONSUMER_N_, Allocator>
+{
+public:
+  using Base = SPMCBoundedQueueBase<T, SPMCBoundedQueue, producerKind, _MAX_CONSUMER_N_, Allocator>;
+  using Node = typename Base::Node;
+  using ConsumerTicket = typename Base::ConsumerTicket;
+  using type = typename Base::type;
+  using Base::Base;
+  using Base::consume_blocking;
+  using Base::is_started;
+  using Base::is_stopped;
+  using Base::start;
+  using Base::stop;
+
+  template <class Consumer>
+  ConsumerTicket attach_consumer(Consumer& c)
+  {
+    for (size_t i = 1; i < _MAX_CONSUMER_N_ + 1; ++i)
+    {
+      std::atomic<bool>& locker = this->consumers_registry_.at(i);
+      bool is_locked = locker.load(std::memory_order_acquire);
+      if (!is_locked)
+      {
+        if (locker.compare_exchange_strong(is_locked, true, std::memory_order_release, std::memory_order_relaxed))
+        {
+
+          bool producer_need_to_accept = true;
+          if (!is_started())
+          {
+            Spinlock::scoped_lock autolock(this->start_guard_);
+            if (!is_started())
+            {
+              // if the queue has not started, then let's assign the next read idx by ourselves!
+              this->consumers_progress_.at(i).store(0, std::memory_order_release);
+              producer_need_to_accept = false;
+            }
+          }
+
+          if (producer_need_to_accept)
+          {
+            this->consumers_progress_.at(i).store(CONSUMER_JOIN_REQUESTED, std::memory_order_release);
+            this->consumers_pending_attach_.fetch_add(1, std::memory_order_release);
+          }
+
+          // let's wait for producer to consumer our positions from which we
+          // shall start safely consuming
+          size_t stopped;
+          size_t consumer_next_idx;
+          do
+          {
+            stopped = is_stopped();
+            consumer_next_idx = this->consumers_progress_.at(i).load(std::memory_order_relaxed);
+          } while (!stopped && consumer_next_idx >= CONSUMER_JOIN_INPROGRESS);
+
+          if (stopped)
+          {
+            throw std::runtime_error("queue has been stoppped");
+          }
+
+          return {i, consumer_next_idx, this->items_per_batch_};
+        } // else someone stole the locker just before us!
+      }
+    }
+
+    return {0, CONSUMER_IS_WELCOME, this->items_per_batch_};
+  }
+
+  bool detach_consumer(size_t consumer_id)
+  {
+    std::atomic<bool>& locker = this->consumers_registry_.at(consumer_id);
+    bool is_locked = locker.load(std::memory_order_acquire);
+    if (is_locked)
+    {
+      this->consumers_progress_.at(consumer_id).store(CONSUMER_IS_WELCOME, std::memory_order_release);
+      if (locker.compare_exchange_strong(is_locked, false, std::memory_order_release, std::memory_order_relaxed))
+      {
+        // this->consumers_pending_dettach_.fetch_add(1, std::memory_order_release);
+        //  technically even possible that while we unregistered it another
+        //  thread, another consumer stole our slot legitimately and we just
+        //  removed it from the registery, effectively leaking it...
+        //  so unlocked the same consumer on multiple threads is really a bad
+        //  idea
+        return true;
+      }
+      else
+      {
+
+        throw std::runtime_error(
+          "unregister_consumer called on another thread "
+          "for the same consumer at the same time!");
+      }
+    }
+
+    return false;
+  }
+
+  size_t try_accept_new_consumer(size_t i, size_t original_idx)
+  {
+    size_t consumer_next_idx = this->consumers_progress_[i].load(std::memory_order_relaxed);
+    if (CONSUMER_JOIN_REQUESTED == consumer_next_idx)
+    {
+      // new consumer wants a ticket!
+      if (this->consumers_progress_[i].compare_exchange_strong(
+            consumer_next_idx, CONSUMER_JOIN_INPROGRESS, std::memory_order_relaxed, std::memory_order_relaxed))
+      {
+        consumer_next_idx = original_idx;
+        this->consumers_progress_[i].store(consumer_next_idx, std::memory_order_relaxed);
+        this->consumers_pending_attach_.fetch_sub(1, std::memory_order_release);
+      }
+    }
+    return consumer_next_idx;
+  }
+
+  template <class Producer, class... Args, bool blocking = Producer::blocking_v>
+  ProducerReturnCode emplace(Producer& producer, Args&&... args) requires(producerKind == ProducerKind::Sequential)
+  {
+    if (!is_started())
+    {
+      return ProducerReturnCode::NotStarted;
+    }
+
+    size_t& min_next_consumer_idx = producer.min_next_consumer_idx_;
+    size_t original_idx = producer.producer_idx_;
+    size_t idx = original_idx & this->idx_mask_;
+
+    Node& node = this->nodes_[idx];
+    size_t version = node.version_.load(std::memory_order_acquire);
+    size_t expected_version = original_idx / this->n_;
+    bool first_time_publish = min_next_consumer_idx == CONSUMER_IS_WELCOME;
+    bool no_free_slot = first_time_publish /*producer publishes first time*/ ||
+      (original_idx > min_next_consumer_idx && original_idx - min_next_consumer_idx >= this->n_) ||
+      expected_version != version;
+    while ((no_free_slot && blocking) || this->consumers_pending_attach_.load(std::memory_order_acquire))
+    {
+      min_next_consumer_idx = CONSUMER_IS_WELCOME;
+      for (size_t i = 1; i < _MAX_CONSUMER_N_ + 1; ++i)
+      {
+        size_t consumer_next_idx = try_accept_new_consumer(i, original_idx);
+        if (consumer_next_idx < CONSUMER_JOIN_INPROGRESS)
+        {
+          min_next_consumer_idx = std::min(min_next_consumer_idx, consumer_next_idx);
+        }
+      }
+
+      if (!is_started())
+      {
+        return ProducerReturnCode::NotStarted;
+      }
+
+      version = node.version_.load(std::memory_order_acquire);
+      no_free_slot = (min_next_consumer_idx != CONSUMER_IS_WELCOME && original_idx > min_next_consumer_idx &&
+                      original_idx - min_next_consumer_idx >= this->n_) ||
+        expected_version != version;
+    }
+
+    if constexpr (!blocking)
+    {
+      if (no_free_slot)
+      {
+        return ProducerReturnCode::TryAgain;
+      }
+    }
+
+    void* storage = node.storage_;
+    if constexpr (!std::is_trivially_destructible_v<T>)
+    {
+      if (version > 0)
+      {
+        static_cast<T*>(storage)->~T();
+      }
+    }
+
+    new (storage) T{std::forward<Args>(args)...}; // also supports aggregate initiazlization, but not in clang!
+    node.version_.store(version + 1, std::memory_order_release);
+    return ProducerReturnCode::Published;
+  }
+
+  template <class Producer, class... Args, bool blocking = Producer::blocking_v>
+  ProducerReturnCode emplace(Producer& producer, Args&&... args) requires(producerKind == ProducerKind::Unordered)
+  {
+    if (!is_started())
+    {
+      return ProducerReturnCode::NotStarted;
+    }
+
+    size_t original_idx = producer.producer_idx_;
+    size_t& min_next_consumer_idx = producer.min_next_consumer_idx_;
+    bool first_time_publish = min_next_consumer_idx == CONSUMER_IS_WELCOME;
+    bool no_free_slot = first_time_publish || (original_idx - min_next_consumer_idx >= this->n_);
+    while ((no_free_slot && blocking) || this->consumers_pending_attach_.load(std::memory_order_acquire))
+    {
+      min_next_consumer_idx = CONSUMER_IS_WELCOME;
+      for (size_t i = 1; i < _MAX_CONSUMER_N_ + 1; ++i)
+      {
+        size_t consumer_next_idx = try_accept_new_consumer(i, original_idx);
+        if (consumer_next_idx < CONSUMER_JOIN_INPROGRESS)
+        {
+          min_next_consumer_idx = std::min(min_next_consumer_idx, consumer_next_idx);
+        }
+      }
+
+      // while we inside a tight loop the queue might
+      // have had stopped so we need to terminate the loop
+      if (!is_started())
+      {
+        return ProducerReturnCode::NotStarted;
+      }
+
+      no_free_slot = (min_next_consumer_idx != CONSUMER_IS_WELCOME &&
+                      original_idx - min_next_consumer_idx >= this->n_);
+    }
+
+    if constexpr (!blocking)
+    {
+      if (no_free_slot)
+      {
+        return ProducerReturnCode::TryAgain;
+      }
+    }
+
+    size_t idx = original_idx & this->idx_mask_;
+    Node& node = this->nodes_[idx];
+    size_t version = node.version_.load(std::memory_order_relaxed);
+
+    void* storage = node.storage_;
+    if constexpr (!std::is_trivially_destructible_v<T>)
+    {
+      if (version > 0)
+      {
+        static_cast<T*>(storage)->~T();
+      }
+    }
+
+    new (storage) T{std::forward<Args>(args)...}; // also supports aggregate initialization - does not work in clang!
+    node.version_.store(version + 1, std::memory_order_release);
+    return ProducerReturnCode::Published;
+  }
+
+  template <class C, class F>
+  ConsumerReturnCode consume_by_func(size_t idx, Node& node, size_t version, C& consumer, F&& f)
+  {
+    if (consumer.is_slow_consumer())
+    {
+      return ConsumerReturnCode::SlowConsumer;
+    }
+
+    if (consumer.previous_version_ < version)
+    {
+      std::forward<F>(f)(node.storage_);
+      if (idx + 1 == this->n_)
+      { // need to
+        // rollover
+        consumer.previous_version_ = version;
+      }
+
+      ++consumer.consumer_next_idx_;
+      if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
+      {
+        this->consumers_progress_[consumer.consumer_id].store(consumer.consumer_next_idx_, std::memory_order_relaxed);
+        consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
+      }
+
+      return ConsumerReturnCode::Consumed;
+    }
+    else
+    {
+      return ConsumerReturnCode::NothingToConsume;
+    }
+  }
+
+  template <class C>
+  ConsumerReturnCode skip(size_t idx, Node& node, size_t version, C& consumer)
+  {
+    if (consumer.is_slow_consumer())
+    {
+      return ConsumerReturnCode::SlowConsumer;
+    }
+
+    if (consumer.previous_version_ < version)
+    {
+      if (idx + 1 == this->n_)
+      { // need to
+        // rollover
+        consumer.previous_version_ = version;
+      }
+      ++consumer.consumer_next_idx_;
+      if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
+      {
+        this->consumers_progress_[consumer.consumer_id].store(consumer.consumer_next_idx_, std::memory_order_relaxed);
+        consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
+      }
+      return ConsumerReturnCode::Consumed;
+    }
+    else
+    {
+      return ConsumerReturnCode::NothingToConsume;
+    }
+  }
+};

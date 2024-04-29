@@ -1,0 +1,17 @@
+{
+    "editor.acceptSuggestionOnCommitCharacter": false,
+    "editor.autoClosingBrackets": "never",
+    "editor.suggestOnTriggerCharacters": true,
+    "editor.quickSuggestions": {
+        "comments": "on",
+        "strings": "on",
+        "other": "on"
+    },
+    "editor.quickSuggestionsDelay": 0,
+    "editor.wordWrap": "on",
+    "editor.fontSize": 16,
+    "cmake.configureOnOpen": false,
+    "cmake.buildDirectory": "${workspaceRoot}/build/${buildType}",
+    "editor.autoClosingQuotes": "never",
+    "editor.autoSurround": "never"
+}

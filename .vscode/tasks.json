@@ -1,0 +1,51 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "type": "shell",
+            "label": "BuildCpp",
+            "command": "cmake --build . --target ${fileBasenameNoExtension}; pwd",
+            "args": [],
+            "options": {
+                "cwd": "${workspaceFolder}/build/example"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "group": "build"
+        },
+        {
+            "label": "Launch Program",
+            "type": "shell",
+            "command": "./${fileBasenameNoExtension}",
+            "options": {
+                "cwd": "${workspaceFolder}/build/example"
+            },
+            "problemMatcher": [],
+            "dependsOn": [
+                "BuildCpp"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "Launch Test",
+            "type": "shell",
+            "command": "test/${fileBasenameNoExtension}",
+            "args": [],
+            "options": {
+                "cwd": "${workspaceFolder}/build"
+            },
+            "problemMatcher": [],
+            "dependsOn": [
+                "BuildCpp"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        }
+    ]
+}

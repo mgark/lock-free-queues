@@ -1,0 +1,39 @@
+#include "detail/common.h"
+#include <assert.h>
+#include <mpmc.h>
+
+struct Order
+{
+  size_t id;
+  size_t vol;
+  double price;
+  char side;
+
+  friend std::ostream& operator<<(std::ostream& out, const Order& o)
+  {
+    out << "id=" << o.id << " vol=" << o.vol << " price=" << o.price << " side=" << o.side << "\n";
+    return out;
+  }
+};
+
+int main()
+{
+  using Queue = SPMCBoundedQueue<Order, ProducerKind::Unordered, 1>;
+  Queue q(8);
+
+  constexpr bool blocking = true;
+  Consumer<Queue, blocking> c(q);
+  Producer<Queue, blocking> p(q);
+
+  {
+    auto r = p.emplace(1u, 1u, 100.0, 'A');
+    assert(ProducerReturnCode::Published == r);
+  }
+
+  {
+    auto r = c.consume([&q](const Order& o) mutable { std::cout << o; });
+    assert(ConsumerReturnCode::Consumed == r);
+  }
+
+  return 0;
+}
