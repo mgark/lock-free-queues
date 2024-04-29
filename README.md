@@ -6,6 +6,7 @@ Also sequential publishing is supported for multi-producer scenario with a compi
 
 # Features
 
+- lock-free. There is only one tiny usage of spin-locks on the slow path
 - single producer / consumer interface for all kinds of queues
 - sequential mutti-publishers supported
 - natural conflation support - publishers could override data
