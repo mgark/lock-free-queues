@@ -2,7 +2,7 @@
 # Introduction
 
 Fairly generic templated lock-free implemenation for SPSC, MPMC, MPSC, SCMP. The idea is to provide the same interface for all of those queues and allow multiple compile-time options to tune them for real scenarios.
-Also sequential publishing is supported for multi-producer scenarios with a compile time flag.
+Also sequential publishing is supported for multi-producer scenarios with a compile time setting.
 
 # Design
 
