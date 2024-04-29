@@ -11,6 +11,8 @@ Also sequential publishing is supported for multi-producer scenario with a compi
 - multiple compile-time tweaks
 - supports reading data through input iterators
 - dynamic consumers join / detach
+- many ways to consume data - return by value, lamba processing, return by pointer etc
+- supports peeking elements by consumers
 - allocator friendly
 
 # TODO
