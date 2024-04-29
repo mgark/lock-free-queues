@@ -13,12 +13,12 @@ Also sequential publishing is supported for multi-producer scenario with a compi
 
 # Features
 
+- reliable (if there is at leat one consumer live, publishers won't be able to override the data and would basically stop progress until there is space on the ring) and conflated queue types (publishers can override data in case consumers are slow)
 - lock-free / wait-free. There is only one tiny usage of spin-locks on the slow path
 - dynamic consumers join / detach
 - single producer / consumer interface for all kinds of queues
 - sequential mutti-publishers supported
 - [in reliable delivery mode] if there is no consumer attached to the queue, producers would just keep pushing...only when there is at least one consumer, producer would be blocked
-- natural conflation support - publishers could override data
 - it is pretty pretty fast.
 - multiple compile-time tweaks
 - supports reading data through input iterators
