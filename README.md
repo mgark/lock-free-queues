@@ -4,7 +4,11 @@
 Fairly generic lock-free templated lock-free implemenation for SPSC, MPMC, MPSC, SCMP. The idea is to provide the same interface for all of those queue and allow multiple complile-time options to tune them for real scenarios.
 Also sequential publishing is supported for multi-producer scenario with a compile time flag.
 
-Requires at least C++20 to work and gcc - got issues with aggregate initializaiton on clang (would address later)
+
+# Requirements 
+
+- at least C++20 to work and gcc - got issues with aggregate initializaiton on clang (would address later)
+- CMake
 
 # Features
 
