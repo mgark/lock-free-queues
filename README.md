@@ -7,6 +7,7 @@ Also sequential publishing is supported for multi-producer scenario with a compi
 # Features
 
 - lock-free / wait-free. There is only one tiny usage of spin-locks on the slow path
+- dynamic consumers join / detach
 - single producer / consumer interface for all kinds of queues
 - sequential mutti-publishers supported
 - [in reliable delivery mode] if there is no consumer attached to the queue, producers would just keep pushing...only when there is at least one consumer, producer would be blocked
@@ -14,7 +15,6 @@ Also sequential publishing is supported for multi-producer scenario with a compi
 - it is pretty pretty fast.
 - multiple compile-time tweaks
 - supports reading data through input iterators
-- dynamic consumers join / detach
 - many ways to consume data - return by value, lamba processing, return by pointer etc
 - supports peeking elements by consumers
 - allocator friendly
