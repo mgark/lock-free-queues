@@ -28,6 +28,7 @@ Also sequential publishing is supported for multi-producer scenario with a compi
 # TODO
 
 - full clang support
+- easy installation on target platforms
 - implement slow consumer handling by allowing ring queue to grow dynamically - up to a limit. Also with this feature you'd get pretty much unbounded queue as well and it would be very fast.
 - benchmark against other implementations, including Java's Distruptor
 - micro optimizations for optimal assembly output including relaxing some of the atomics
