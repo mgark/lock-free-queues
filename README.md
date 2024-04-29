@@ -7,6 +7,8 @@ Also sequential publishing is supported for multi-producer scenario with a compi
 # Features
 
 - single producer / consumer interface for all kinds of queues
+- sequential mutti-publishers supported
+- natural conflation support - publishers could override data
 - it is pretty pretty fast.
 - multiple compile-time tweaks
 - supports reading data through input iterators
