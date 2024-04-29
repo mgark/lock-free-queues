@@ -24,5 +24,5 @@ Also sequential publishing is supported for multi-producer scenario with a compi
 - benchmark against other implementations, including Java's Distruptor
 - micro optimizations for optimal assembly output including relaxing some of the atomics
 - test the queues on the devices with weak memory ordering to catch any possible race condition
-- use Race Relay detector to spot any tricky race condition
+- use Relacy Race Detector to spot any potential race condition
 - make publishers work with output iterators
