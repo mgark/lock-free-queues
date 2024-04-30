@@ -23,6 +23,7 @@
 #include <thread>
 
 #include "common_test.h"
+#include "detail/spmc_bounded_conflated_queue.h"
 
 TEST_CASE("SPSC throughput test")
 {
@@ -83,6 +84,74 @@ TEST_CASE("SPSC throughput test")
       while (n <= N)
       {
         if (p.emplace(OrderNonTrivial{n, 1U, 100.1, 'B'}) == ProducerReturnCode::Published)
+          ++n;
+      }
+    });
+
+  producer.join();
+  for (auto& c : consumers)
+  {
+    c.join();
+  }
+}
+
+TEST_CASE("Conflated SPMC throughput test")
+{
+  std::string s;
+  std::mutex guard;
+  constexpr size_t _MAX_CONSUMERS_ = 6;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
+  constexpr size_t N = 10000000;
+  using Queue = SPMCBoundedConflatedQueue<Order, ProducerKind::Unordered, _MAX_CONSUMERS_>;
+  Queue q(_PUBLISHER_QUEUE_SIZE);
+
+  size_t from = std::chrono::system_clock::now().time_since_epoch().count();
+  std::vector<std::thread> consumers;
+  std::vector<size_t> totalVols(_MAX_CONSUMERS_, 0);
+  std::atomic_int consumer_joined_num{0};
+
+  TLOG << "\n  Conflated throughput test\n";
+  for (size_t i = 0; i < _MAX_CONSUMERS_; ++i)
+  {
+    consumers.push_back(std::thread(
+      [&q, i, &guard, N, &consumer_joined_num, &totalVols]()
+      {
+        Consumer<Queue, true> c(q);
+        ++consumer_joined_num;
+        auto begin = std::chrono::system_clock::now();
+        size_t n = 0;
+        while (n < N)
+        {
+          c.consume(
+            [consumer_id = i, &n, &q, &totalVols](const Order& r) mutable
+            {
+              totalVols[consumer_id] += r.vol;
+              n = r.id;
+            });
+        }
+
+        std::scoped_lock lock(guard);
+        auto end = std::chrono::system_clock::now();
+        auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
+        auto avg_time_ns = (totalVols[i] ? (nanos.count() / totalVols[i]) : 0);
+        TLOG << "Consumer [" << i << "] raw time per one item: " << avg_time_ns << "ns"
+             << " consumed [" << totalVols[i] << " items \n";
+        CHECK(avg_time_ns < 40);
+      }));
+  }
+
+  std::thread producer(
+    [&q, &consumer_joined_num, N]()
+    {
+      while (consumer_joined_num.load() < _MAX_CONSUMERS_)
+        ;
+
+      Producer<Queue, true> p(q);
+      auto begin = std::chrono::system_clock::now();
+      size_t n = 1;
+      while (n <= N)
+      {
+        if (p.emplace(Order{n, 1U, 100.1, 'B'}) == ProducerReturnCode::Published)
           ++n;
       }
     });

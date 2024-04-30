@@ -45,7 +45,7 @@ enum class ProducerKind
 enum class ProducerReturnCode
 {
   Published,
-  NotStarted,
+  NotRunning,
   TryAgain
 };
 
@@ -54,7 +54,7 @@ enum class ConsumerReturnCode
   NothingToConsume,
   Consumed,
   Stopped,
-  SlowConsumer
+  SlowConsumer // note that for conflated queues it means that producer warped as consumer was still trying to consume a value
 };
 
 enum class QueueState
@@ -65,9 +65,9 @@ enum class QueueState
 };
 
 // the order in how numbers are assigned does matter!
-static constexpr size_t CONSUMER_IS_WELCOME = std::numeric_limits<size_t>::max();
-static constexpr size_t CONSUMER_JOIN_REQUESTED = CONSUMER_IS_WELCOME - 1;
-static constexpr size_t CONSUMER_JOIN_INPROGRESS = CONSUMER_JOIN_REQUESTED - 2;
+constexpr size_t CONSUMER_IS_WELCOME = std::numeric_limits<size_t>::max();
+constexpr size_t CONSUMER_JOIN_REQUESTED = CONSUMER_IS_WELCOME - 1;
+constexpr size_t CONSUMER_JOIN_INPROGRESS = CONSUMER_JOIN_REQUESTED - 2;
 
 class QueueStoppedExp : public std::exception
 {

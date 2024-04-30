@@ -142,7 +142,7 @@ public:
   {
     if (!is_running())
     {
-      return ProducerReturnCode::NotStarted;
+      return ProducerReturnCode::NotRunning;
     }
 
     size_t& min_next_consumer_idx = producer.min_next_consumer_idx_;
@@ -170,7 +170,7 @@ public:
 
       if (!is_running())
       {
-        return ProducerReturnCode::NotStarted;
+        return ProducerReturnCode::NotRunning;
       }
 
       version = node.version_.load(std::memory_order_acquire);
@@ -206,7 +206,7 @@ public:
   {
     if (!is_running())
     {
-      return ProducerReturnCode::NotStarted;
+      return ProducerReturnCode::NotRunning;
     }
 
     size_t original_idx = producer.producer_idx_;
@@ -229,7 +229,7 @@ public:
       // have had stopped so we need to terminate the loop
       if (!is_running())
       {
-        return ProducerReturnCode::NotStarted;
+        return ProducerReturnCode::NotRunning;
       }
 
       no_free_slot = (min_next_consumer_idx != CONSUMER_IS_WELCOME &&

@@ -16,7 +16,9 @@
 
 #pragma once
 
+#include "detail/common.h"
 #include "spmc_bounded_queue_base.h"
+#include <atomic>
 #include <type_traits>
 
 template <class T, ProducerKind producerKind = ProducerKind::Unordered,
@@ -102,7 +104,7 @@ public:
   {
     if (!is_running())
     {
-      return ProducerReturnCode::NotStarted;
+      return ProducerReturnCode::NotRunning;
     }
 
     // the whole point for the producer is just keep publishing to the new
@@ -129,8 +131,8 @@ public:
     if (previous_version < version)
     {
       std::forward<F>(f)(node.storage_);
-      std::atomic_signal_fence(std::memory_order_acq_rel);
-      size_t recent_version = node.version_.load(std::memory_order_acquire);
+      std::atomic_thread_fence(std::memory_order_acquire); // will be hardare no-op on x86, but will provide safety for platforms which allow load to re-order with loads
+      size_t recent_version = node.version_.load(std::memory_order_relaxed);
       if (recent_version == version)
       {
         ++consumer.consumer_next_idx_;
@@ -139,6 +141,10 @@ public:
           previous_version = version;
         }
         return ConsumerReturnCode::Consumed;
+      }
+      else
+      {
+        return ConsumerReturnCode::SlowConsumer;
       }
     }
 
@@ -151,19 +157,17 @@ public:
     size_t& previous_version = consumer.previous_version_;
     if (previous_version < version)
     {
-      std::atomic_signal_fence(std::memory_order_acq_rel);
-      size_t recent_version = node.version_.load(std::memory_order_acquire);
-      if (recent_version == version)
-      {
-        ++consumer.consumer_next_idx_;
-        if (idx + 1 == this->n_)
-        { // need to rollover
-          previous_version = version;
-        }
-        return ConsumerReturnCode::Consumed;
+      ++consumer.consumer_next_idx_;
+      if (idx + 1 == this->n_)
+      { // need to rollover
+        previous_version = version;
       }
+      return ConsumerReturnCode::Consumed;
     }
-    return ConsumerReturnCode::NothingToConsume;
+    else
+    {
+      return ConsumerReturnCode::NothingToConsume;
+    }
   }
 
   template <class C>

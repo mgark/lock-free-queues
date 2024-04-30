@@ -114,6 +114,8 @@ public:
 
   ~SPMCBoundedQueueBase()
   {
+    stop();
+
     if constexpr (!std::is_trivially_destructible_v<T>)
     {
       for (size_t i = 0; i < this->n_; ++i)
