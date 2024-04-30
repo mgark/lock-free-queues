@@ -121,23 +121,26 @@ TEST_CASE("Conflated SPMC throughput test")
         ++consumer_joined_num;
         auto begin = std::chrono::system_clock::now();
         size_t n = 0;
+        size_t items_num = 0;
         while (n < N)
         {
           c.consume(
-            [consumer_id = i, &n, &q, &totalVols](const Order& r) mutable
+            [&items_num, consumer_id = i, &n, &q, &totalVols](const Order& r) mutable
             {
               totalVols[consumer_id] += r.vol;
               n = r.id;
+              ++items_num;
             });
         }
 
         std::scoped_lock lock(guard);
         auto end = std::chrono::system_clock::now();
         auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
-        auto avg_time_ns = (totalVols[i] ? (nanos.count() / totalVols[i]) : 0);
+        auto avg_time_ns = (items_num ? (nanos.count() / items_num) : 0);
         TLOG << "Consumer [" << i << "] raw time per one item: " << avg_time_ns << "ns"
-             << " consumed [" << totalVols[i] << " items \n";
-        CHECK(avg_time_ns < 70);
+             << " consumed [" << items_num << " items, conflation ratio = ["
+             << (double)n / items_num << "] \n";
+        CHECK(avg_time_ns < 150);
       }));
   }
 

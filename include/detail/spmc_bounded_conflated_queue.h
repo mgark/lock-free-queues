@@ -115,14 +115,13 @@ public:
 
     size_t original_idx = producer.producer_idx_;
     size_t idx = original_idx & this->idx_mask_;
-
     Node& node = this->nodes_[idx];
     {
       size_t version = node.version_.load(std::memory_order_relaxed);
       node.version_.store(version + 1, std::memory_order_relaxed); // WARNING! indicating that write is in-progress
       std::atomic_thread_fence(std::memory_order_release); // again it is not striclty standard compliant, but will work on
-      // x86. This fence prevents stores preceeding it to-reorder with the writes following it, so it means if reader would see
-      // even a single bit of the newly created object, ***it would have to see a version incremented above***!
+      //  x86. This fence prevents stores preceeding it to-reorder with the writes following it, so it means if reader would see
+      //  even a single bit of the newly created object, ***it would have to see a version incremented above***!
       void* storage = node.storage_;
       NodeAllocTraits::construct(this->alloc_, static_cast<T*>(storage), std::forward<Args>(args)...);
       node.version_.store(version + 2, std::memory_order_release);
@@ -137,7 +136,7 @@ public:
     size_t& previous_version = consumer.previous_version_;
     if ((version & 1) == 0 && previous_version < version)
     {
-      thread_local std::byte tmp[sizeof(T)];
+      std::byte tmp[sizeof(T)];
       std::memcpy(tmp, node.storage_, sizeof(T));
       // WARNING! because we don't read atomic, it is not technically standard compliant, but
       // on x86 we get away since the acq fence below prohibts by CPU and compiler to re-order Loads

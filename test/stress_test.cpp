@@ -35,7 +35,7 @@ TEST_CASE("SPMC conflated queue stress test to detect race conditions")
 
   std::string s;
   std::mutex guard;
-  constexpr size_t _MAX_CONSUMERS_ = 3;
+  constexpr size_t _MAX_CONSUMERS_ = 6;
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 1;
   constexpr size_t N = 300000000;
   constexpr size_t BATCH_NUM = 1;
