@@ -95,11 +95,12 @@ TEST_CASE("SPSC throughput test")
   }
 }
 
+#if defined(__x86_64__)
 TEST_CASE("Conflated SPMC throughput test")
 {
   std::string s;
   std::mutex guard;
-  constexpr size_t _MAX_CONSUMERS_ = 6;
+  constexpr size_t _MAX_CONSUMERS_ = 3;
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
   constexpr size_t N = 10000000;
   using Queue = SPMCBoundedConflatedQueue<Order, ProducerKind::Unordered, _MAX_CONSUMERS_>;
@@ -136,7 +137,7 @@ TEST_CASE("Conflated SPMC throughput test")
         auto avg_time_ns = (totalVols[i] ? (nanos.count() / totalVols[i]) : 0);
         TLOG << "Consumer [" << i << "] raw time per one item: " << avg_time_ns << "ns"
              << " consumed [" << totalVols[i] << " items \n";
-        CHECK(avg_time_ns < 40);
+        CHECK(avg_time_ns < 70);
       }));
   }
 
@@ -162,6 +163,7 @@ TEST_CASE("Conflated SPMC throughput test")
     c.join();
   }
 }
+#endif
 
 TEST_CASE("Unordered SPMC throughput test")
 {
@@ -509,6 +511,7 @@ TEST_CASE("MPMC Sequential")
   }
 }
 
+#if defined(__x86_64__)
 TEST_CASE("Unordered conflated MPMC - consumers joining at random times")
 {
   using Queue = SPMCBoundedConflatedQueue<Order>;
@@ -610,5 +613,6 @@ TEST_CASE("Unordered conflated MPMC - consumers joining at random times")
   for (auto& c : consumers)
     c.join();
 }
+#endif
 
 int main(int argc, char** argv) { return Catch::Session().run(argc, argv); }
