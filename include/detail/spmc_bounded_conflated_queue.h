@@ -137,7 +137,9 @@ public:
     size_t& previous_version = consumer.previous_version_;
     if ((version & 1) == 0 && previous_version < version)
     {
-      std::forward<F>(f)(node.storage_); // WARNING! because we don't read atomic, it is not technically standard compliant, but
+      thread_local std::byte tmp[sizeof(T)];
+      std::memcpy(tmp, node.storage_, sizeof(T));
+      // WARNING! because we don't read atomic, it is not technically standard compliant, but
       // on x86 we get away since the acq fence below prohibts by CPU and compiler to re-order Loads
       // preceeding the fence and loads following it. This implies that if any bit of the object
       // gonna be read, its new version would be read as well so that we can detect it if the
@@ -146,6 +148,7 @@ public:
       size_t recent_version = node.version_.load(std::memory_order_relaxed);
       if (recent_version == version)
       {
+        std::forward<F>(f)(tmp);
         ++consumer.consumer_next_idx_;
         if (idx + 1 == this->n_)
         { // need to rollover
