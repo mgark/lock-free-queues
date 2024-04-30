@@ -10,7 +10,7 @@ Also sequential publishing is supported for multi-producer scenarios with a comp
 
 The idea behind the implementation is pretty simple - just have a fixed number of slots in a ring buffer with fixed size, and don't let consumers touch the memory from the ring buffer. Instead let consumers only update their corresponding read index at intervals (default is each 25% of the ring buffer size). The producer would make sure not to override the index with min consumer read idx.
 
-## Conflated queues
+## Conflated queues [x86 only]
 
 Consumers don't need to track their index even, just check if a given slot got a newer version, copy it and after the copy has been finished make sure the version has not changed as the publisher might have warped around by the time the copy finished. It requires using some memory fences as well (hardware no-op on x86) and odd / even trick as well which is pretty much seq lock, but it scales very well and it is super fast.
 
