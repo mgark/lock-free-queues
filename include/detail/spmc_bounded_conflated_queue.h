@@ -116,9 +116,11 @@ public:
     Node& node = this->nodes_[idx];
     {
       size_t version = node.version_.load(std::memory_order_relaxed);
+      node.version_.store(version + 1, std::memory_order_relaxed); // indicating that write is in-progress
+      std::atomic_thread_fence(std::memory_order_release);
       void* storage = node.storage_;
       NodeAllocTraits::construct(this->alloc_, static_cast<T*>(storage), std::forward<Args>(args)...);
-      node.version_.store(version + 1, std::memory_order_release);
+      node.version_.store(version + 2, std::memory_order_release);
     }
 
     return ProducerReturnCode::Published;
@@ -128,10 +130,10 @@ public:
   ConsumerReturnCode consume_by_func(size_t idx, Node& node, size_t version, C& consumer, F&& f)
   {
     size_t& previous_version = consumer.previous_version_;
-    if (previous_version < version)
+    if ((version & 1) == 0 && previous_version < version)
     {
       std::forward<F>(f)(node.storage_);
-      std::atomic_thread_fence(std::memory_order_acquire); // will be hardare no-op on x86, but will provide safety for platforms which allow load to re-order with loads
+      std::atomic_thread_fence(std::memory_order_acquire);
       size_t recent_version = node.version_.load(std::memory_order_relaxed);
       if (recent_version == version)
       {
@@ -155,7 +157,7 @@ public:
   ConsumerReturnCode skip(size_t idx, Node& node, size_t version, C& consumer)
   {
     size_t& previous_version = consumer.previous_version_;
-    if (previous_version < version)
+    if ((version & 1) == 0 && previous_version < version)
     {
       ++consumer.consumer_next_idx_;
       if (idx + 1 == this->n_)
