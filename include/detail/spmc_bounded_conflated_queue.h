@@ -119,7 +119,7 @@ public:
     Node& node = this->nodes_[idx];
     {
       size_t version = node.version_.load(std::memory_order_relaxed);
-      node.version_.store(version + 1, std::memory_order_relaxed); // indicating that write is in-progress
+      node.version_.store(version + 1, std::memory_order_relaxed); // WARNING! indicating that write is in-progress
       std::atomic_thread_fence(std::memory_order_release); // again it is not striclty standard compliant, but will work on
       // x86. This fence prevents stores preceeding it to-reorder with the writes following it, so it means if reader would see
       // even a single bit of the newly created object, ***it would have to see a version incremented above***!
@@ -138,10 +138,10 @@ public:
     if ((version & 1) == 0 && previous_version < version)
     {
       std::forward<F>(f)(node.storage_); // WARNING! because we don't read atomic, it is not technically standard compliant, but
-      // on x86 we get away since the fence below prohibts Load re-ordering between loads preceeding
-      // the fence and the loads following it. This implies that if any bit of the object gonna be read,
-      // its new version would be read as well so that we can detect it if the producer could warp around and modify our object while
-      // we were reading it
+      // on x86 we get away since the acq fence below prohibts by CPU and compiler to re-order Loads
+      // preceeding the fence and loads following it. This implies that if any bit of the object
+      // gonna be read, its new version would be read as well so that we can detect it if the
+      // producer could warp around and modify our object while we were reading it
       std::atomic_thread_fence(std::memory_order_acquire);
       size_t recent_version = node.version_.load(std::memory_order_relaxed);
       if (recent_version == version)
