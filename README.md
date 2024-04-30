@@ -12,7 +12,7 @@ The idea behind the implementation is pretty simple - just have a fixed number o
 
 ## Conflated queues
 
-Consumers don't need to track their index even, just check if a given slot got a newer version, copy it and after the copy has been finished make sure the version has not changed as the publisher might have warped around by the time the copy finished. It requires using some memory fences as well (hardware no-op on x86) and odd / even trick as well which is pretty much seq lock.
+Consumers don't need to track their index even, just check if a given slot got a newer version, copy it and after the copy has been finished make sure the version has not changed as the publisher might have warped around by the time the copy finished. It requires using some memory fences as well (hardware no-op on x86) and odd / even trick as well which is pretty much seq lock, but it scales very well and it is super fast.
 
 # Requirements
 
