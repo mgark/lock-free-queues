@@ -40,6 +40,7 @@ Consumers don't need to track their index even, just check if a given slot got a
 - easy installation on target platforms
 - implement slow consumer handling by allowing ring queue to grow dynamically - up to a limit. Also with this feature you'd get a pretty much unbounded queue as well and it would be very fast.
 - benchmark against other implementations, including Java's Disruptor
+- support for queues over shared memory
 - micro optimizations for optimal assembly output including relaxing some of the atomics
 - test the queues on devices with weak memory ordering to catch any possible race condition
 - use Relacy Race Detector to spot any potential race condition
