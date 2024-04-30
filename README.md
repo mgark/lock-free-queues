@@ -12,7 +12,7 @@ The idea behind the implementation is pretty simple - just have a fixed number o
 
 ## Conflated queues
 
-Consumers don't need to track their index even, just check if a given slot got a newer version, copy it and after the copy has been finished make sure the version has not changed as the publisher might have warped around by the time the copy finished.
+Consumers don't need to track their index even, just check if a given slot got a newer version, copy it and after the copy has been finished make sure the version has not changed as the publisher might have warped around by the time the copy finished. It requires using some memory fences as well (hardware no-op on x86) and odd / even trick as well which is pretty much seq lock.
 
 # Requirements
 
@@ -38,6 +38,7 @@ Consumers don't need to track their index even, just check if a given slot got a
 
 - full clang support
 - easy installation on target platforms
+- write more tests
 - implement slow consumer handling by allowing ring queue to grow dynamically - up to a limit. Also with this feature you'd get a pretty much unbounded queue as well and it would be very fast.
 - benchmark against other implementations, including Java's Disruptor
 - support for queues over shared memory
