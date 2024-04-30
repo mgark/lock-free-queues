@@ -30,7 +30,7 @@ Consumers don't need to track their index even, just check if a given slot got a
 - it is pretty pretty fast.
 - multiple compile-time tweaks
 - supports reading data through input iterators
-- many ways to consume data - return by value, lambda processing, return by pointer etc
+- many ways to consume data - return by value, lambda processing, consume by copying through the input object refrence 
 - supports peeking elements by consumers
 - allocator friendly
 
