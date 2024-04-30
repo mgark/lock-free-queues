@@ -41,15 +41,8 @@ int main()
   Consumer<Queue, blocking> c(q);
   Producer<Queue, blocking> p(q);
 
-  {
-    auto r = p.emplace(1u, 1u, 100.0, 'A');
-    assert(ProducerReturnCode::Published == r);
-  }
-
-  {
-    auto r = c.consume([&q](const Order& o) mutable { std::cout << o; });
-    assert(ConsumerReturnCode::Consumed == r);
-  }
+  p.emplace(1u, 1u, 100.0, 'A');
+  c.consume([&q](const Order& o) mutable { std::cout << o; });
 
   return 0;
 }

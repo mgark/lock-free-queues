@@ -19,10 +19,11 @@
 #include "common.h"
 #include "spin_lock.h"
 #include <atomic>
+#include <memory>
 
 template <class T, class Derived, ProducerKind producerKind = ProducerKind::Unordered,
-          size_t _MAX_CONSUMER_N_ = 8, class Allocator = std::allocator<T>>
-class alignas(128) SPMCBoundedQueueBase
+          size_t _MAX_CONSUMER_N_ = 8, size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>>
+class SPMCBoundedQueueBase
 {
 public:
   using type = T;
@@ -54,17 +55,16 @@ protected:
   };
 
   using NodeAllocator = typename std::allocator_traits<Allocator>::template rebind_alloc<Node>;
+  using NodeAllocTraits = std::allocator_traits<NodeAllocator>;
 
   using ProducerContext =
     std::conditional_t<producerKind == ProducerKind::Unordered, ProducerContextUnordered, ProducerContextSequencial>;
 
   static_assert(std::is_default_constructible_v<Node>, "Node must be default constructible");
 
-  static constexpr size_t batch_num_ = 4;
-
   size_t n_;
   size_t items_per_batch_;
-  std::atomic<QueueState> state_{QueueState::CREATED};
+  std::atomic<QueueState> state_{QueueState::Created};
   size_t idx_mask_;
 
   ProducerContext producer_ctx_;
@@ -83,11 +83,11 @@ protected:
 public:
   SPMCBoundedQueueBase(std::size_t N, const Allocator& alloc = Allocator())
     : n_(N),
-      items_per_batch_(n_ / batch_num_),
+      items_per_batch_(n_ / _BATCH_NUM_),
       idx_mask_(n_ - 1),
       consumers_pending_attach_(0),
       // consumers_pending_dettach_(0),
-      max_outstanding_non_consumed_items_((batch_num_ - 1) * items_per_batch_),
+      max_outstanding_non_consumed_items_((_BATCH_NUM_ - 1) * items_per_batch_),
       alloc_(alloc)
   {
     if ((N & (N - 1)) != 0)
@@ -131,15 +131,15 @@ public:
     std::allocator_traits<NodeAllocator>::deallocate(alloc_, nodes_, n_);
   }
 
-  void stop() { this->state_.store(QueueState::STOPPED, std::memory_order_release); }
+  void stop() { this->state_.store(QueueState::Stopped, std::memory_order_release); }
 
   bool is_stopped() const
   {
-    return this->state_.load(std::memory_order_acquire) == QueueState::STOPPED;
+    return this->state_.load(std::memory_order_acquire) == QueueState::Stopped;
   }
-  bool is_started() const
+  bool is_running() const
   {
-    return this->state_.load(std::memory_order_acquire) == QueueState::RUNNING;
+    return this->state_.load(std::memory_order_acquire) == QueueState::Running;
   }
 
   void start()
@@ -148,7 +148,7 @@ public:
     // need to set their own consumer reader idx to 0 if the queue has not started yet - they can
     // only do that before start method is called
     Spinlock::scoped_lock autolock(start_guard_);
-    this->state_.store(QueueState::RUNNING, std::memory_order_release);
+    this->state_.store(QueueState::Running, std::memory_order_release);
   }
 
   template <class C>
@@ -170,9 +170,9 @@ public:
         return r;
 
       state = this->state_.load(std::memory_order_acquire);
-    } while (state == QueueState::RUNNING && r == ConsumerReturnCode::NothingToConsume);
+    } while (state == QueueState::Running && r == ConsumerReturnCode::NothingToConsume);
 
-    if (state == QueueState::STOPPED)
+    if (state == QueueState::Stopped)
       return ConsumerReturnCode::Stopped;
 
     return r;
@@ -195,7 +195,7 @@ public:
     else
     {
       QueueState state = this->state_.load(std::memory_order_acquire);
-      if (state == QueueState::STOPPED)
+      if (state == QueueState::Stopped)
         return ConsumerReturnCode::Stopped;
 
       return r;
@@ -221,9 +221,9 @@ public:
         return r;
 
       state = this->state_.load(std::memory_order_acquire);
-    } while (state == QueueState::RUNNING && r == ConsumerReturnCode::NothingToConsume);
+    } while (state == QueueState::Running && r == ConsumerReturnCode::NothingToConsume);
 
-    if (state == QueueState::STOPPED)
+    if (state == QueueState::Stopped)
       return ConsumerReturnCode::Stopped;
 
     return r;
@@ -246,7 +246,7 @@ public:
     else
     {
       QueueState state = this->state_.load(std::memory_order_acquire);
-      if (state == QueueState::STOPPED)
+      if (state == QueueState::Stopped)
         return ConsumerReturnCode::Stopped;
 
       return r;
@@ -296,8 +296,8 @@ public:
         return r;
 
       state = this->state_.load(std::memory_order_acquire);
-    } while (state == QueueState::RUNNING && r == ConsumerReturnCode::NothingToConsume);
-    if (state == QueueState::STOPPED)
+    } while (state == QueueState::Running && r == ConsumerReturnCode::NothingToConsume);
+    if (state == QueueState::Stopped)
       return ConsumerReturnCode::Stopped;
 
     return r;
@@ -316,7 +316,7 @@ public:
     else
     {
       QueueState state = this->state_.load(std::memory_order_acquire);
-      if (state == QueueState::STOPPED)
+      if (state == QueueState::Stopped)
         return ConsumerReturnCode::Stopped;
 
       return r;

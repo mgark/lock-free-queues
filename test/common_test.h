@@ -14,9 +14,11 @@
  * limitations under the License.
  */
 
-#include "detail/common.h"
-#include <assert.h>
-#include <mpmc.h>
+#pragma once
+
+#include <iostream>
+#include <mutex>
+#include <type_traits>
 
 struct Order
 {
@@ -32,19 +34,41 @@ struct Order
   }
 };
 
-int main()
+struct OrderNonTrivial
 {
-  using Queue = SPMCBoundedQueue<Order, ProducerKind::Unordered, 2>;
-  Queue q(8);
+  size_t id;
+  size_t vol;
+  double price;
+  char side;
 
-  constexpr bool blocking = true;
-  Consumer<Queue, blocking> c1(q);
-  Consumer<Queue, blocking> c2(q);
-  Producer<Queue, blocking> p(q);
+  ~OrderNonTrivial() {}
 
-  p.emplace(1u, 1u, 100.0, 'A');
-  c1.consume([&q](const Order& o) mutable { std::cout << o; });
-  c2.consume([&q](const Order& o) mutable { std::cout << o; });
+  friend std::ostream& operator<<(std::ostream& out, const OrderNonTrivial& o)
+  {
+    out << "id=" << o.id << " vol=" << o.vol << " price=" << o.price << " side=" << o.side << "\n";
+    return out;
+  }
+};
 
-  return 0;
-}
+static_assert(!std::is_trivial_v<OrderNonTrivial>);
+
+class ConsoleLogger
+{
+public:
+  ConsoleLogger() { guard().lock(); }
+  ~ConsoleLogger() { guard().unlock(); }
+
+  static std::mutex& guard()
+  {
+    static std::mutex g;
+    return g;
+  }
+
+  ConsoleLogger& operator<<(const auto& v)
+  {
+    std::cout << v;
+    return *this;
+  }
+};
+
+#define TLOG ConsoleLogger()

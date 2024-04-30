@@ -14,25 +14,12 @@
  * limitations under the License.
  */
 
-#include "detail/common.h"
+#include "common_test.h"
 #include <assert.h>
+#include <catch2/catch_all.hpp>
 #include <mpmc.h>
 
-struct Order
-{
-  size_t id;
-  size_t vol;
-  double price;
-  char side;
-
-  friend std::ostream& operator<<(std::ostream& out, const Order& o)
-  {
-    out << "id=" << o.id << " vol=" << o.vol << " price=" << o.price << " side=" << o.side << "\n";
-    return out;
-  }
-};
-
-int main()
+TEST_CASE("SPMC functional test")
 {
   using Queue = SPMCBoundedQueue<Order, ProducerKind::Unordered, 2>;
   Queue q(8);
@@ -41,10 +28,16 @@ int main()
   Consumer<Queue, blocking> c1(q);
   Consumer<Queue, blocking> c2(q);
   Producer<Queue, blocking> p(q);
-
-  p.emplace(1u, 1u, 100.0, 'A');
-  c1.consume([&q](const Order& o) mutable { std::cout << o; });
-  c2.consume([&q](const Order& o) mutable { std::cout << o; });
-
-  return 0;
+  {
+    auto r = p.emplace(1u, 1u, 100.0, 'A');
+    CHECK(ProducerReturnCode::Published == r);
+  }
+  {
+    auto r = c1.consume([&q](const Order& o) mutable { std::cout << o; });
+    CHECK(ConsumerReturnCode::Consumed == r);
+    r = c2.consume([&q](const Order& o) mutable { std::cout << o; });
+    CHECK(ConsumerReturnCode::Consumed == r);
+  }
 }
+
+int main(int argc, char** argv) { return Catch::Session().run(argc, argv); }

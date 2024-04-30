@@ -59,9 +59,9 @@ enum class ConsumerReturnCode
 
 enum class QueueState
 {
-  CREATED,
-  RUNNING,
-  STOPPED
+  Created,
+  Running,
+  Stopped
 };
 
 // the order in how numbers are assigned does matter!

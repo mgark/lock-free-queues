@@ -14,28 +14,29 @@
  * limitations under the License.
  */
 
-#pragma once
+#include "common_test.h"
+#include <assert.h>
+#include <catch2/catch_all.hpp>
+#include <mpmc.h>
 
-#include <iostream>
-#include <mutex>
-
-class ConsoleLogger
+TEST_CASE("SPSC functional test")
 {
-public:
-  ConsoleLogger() { guard().lock(); }
-  ~ConsoleLogger() { guard().unlock(); }
+  using Queue = SPMCBoundedQueue<Order, ProducerKind::Unordered, 1>;
+  Queue q(8);
 
-  static std::mutex& guard()
+  constexpr bool blocking = true;
+  Consumer<Queue, blocking> c(q);
+  Producer<Queue, blocking> p(q);
+
   {
-    static std::mutex g;
-    return g;
+    auto r = p.emplace(1u, 1u, 100.0, 'A');
+    CHECK(ProducerReturnCode::Published == r);
   }
 
-  ConsoleLogger& operator<<(const auto& v)
   {
-    std::cout << v;
-    return *this;
+    auto r = c.consume([&q](const Order& o) mutable { std::cout << o; });
+    CHECK(ConsumerReturnCode::Consumed == r);
   }
-};
+}
 
-#define TLOG ConsoleLogger()
+int main(int argc, char** argv) { return Catch::Session().run(argc, argv); }

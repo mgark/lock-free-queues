@@ -24,7 +24,7 @@ Consumers don't need to track their index even, just check if a given slot got a
 
 - reliable (if there is at least one consumer live, publishers won't be able to override the data and would basically stop progress until there is space on the ring) and conflated queue types (publishers can override data in case consumers are slow)
 - lock-free / wait-free. There is only one tiny usage of spin-locks on the slow path
-- dynamic consumers join / detach
+- dynamic consumers attach / detach
 - single producer / consumer interface for all kinds of queues
 - sequential mutti-publishers supported
 - it is pretty pretty fast.

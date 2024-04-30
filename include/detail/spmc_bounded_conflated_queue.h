@@ -19,20 +19,24 @@
 #include "spmc_bounded_queue_base.h"
 #include <type_traits>
 
-template <class T, size_t _MAX_CONSUMER_N_ = 16, ProducerKind producerKind = ProducerKind::Unordered, class Allocator = std::allocator<T>>
+template <class T, ProducerKind producerKind = ProducerKind::Unordered,
+          size_t _MAX_CONSUMER_N_ = 16, size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>>
 class SPMCBoundedConflatedQueue
-  : public SPMCBoundedQueueBase<T, SPMCBoundedConflatedQueue<T, _MAX_CONSUMER_N_, producerKind, Allocator>, producerKind, _MAX_CONSUMER_N_, Allocator>
+  : public SPMCBoundedQueueBase<T, SPMCBoundedConflatedQueue<T, producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>,
+                                producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>
 {
   static_assert(std::is_trivially_copyable_v<T>);
 
 public:
-  using Base = SPMCBoundedQueueBase<T, SPMCBoundedConflatedQueue, producerKind, _MAX_CONSUMER_N_, Allocator>;
+  using Base =
+    SPMCBoundedQueueBase<T, SPMCBoundedConflatedQueue, producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>;
+  using NodeAllocTraits = typename Base::NodeAllocTraits;
   using Node = typename Base::Node;
   using ConsumerTicket = typename Base::ConsumerTicket;
   using type = typename Base::type;
   using Base::Base;
   using Base::consume_blocking;
-  using Base::is_started;
+  using Base::is_running;
   using Base::is_stopped;
   using Base::start;
   using Base::stop;
@@ -96,7 +100,7 @@ public:
   template <class Producer, class... Args>
   ProducerReturnCode emplace(Producer& producer, Args&&... args)
   {
-    if (!is_started())
+    if (!is_running())
     {
       return ProducerReturnCode::NotStarted;
     }
@@ -111,7 +115,7 @@ public:
     {
       size_t version = node.version_.load(std::memory_order_relaxed);
       void* storage = node.storage_;
-      new (storage) T{std::forward<Args>(args)...}; // also supports aggregate initialization but it does not work in clang
+      NodeAllocTraits::construct(this->alloc_, static_cast<T*>(storage), std::forward<Args>(args)...);
       node.version_.store(version + 1, std::memory_order_release);
     }
 

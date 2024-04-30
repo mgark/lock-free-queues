@@ -19,18 +19,21 @@
 #include "detail/spin_lock.h"
 #include "spmc_bounded_queue_base.h"
 
-template <class T, ProducerKind producerKind = ProducerKind::Unordered, size_t _MAX_CONSUMER_N_ = 8, class Allocator = std::allocator<T>>
+template <class T, ProducerKind producerKind = ProducerKind::Unordered, size_t _MAX_CONSUMER_N_ = 8,
+          size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>>
 class SPMCBoundedQueue
-  : public SPMCBoundedQueueBase<T, SPMCBoundedQueue<T, producerKind, _MAX_CONSUMER_N_, Allocator>, producerKind, _MAX_CONSUMER_N_, Allocator>
+  : public SPMCBoundedQueueBase<T, SPMCBoundedQueue<T, producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>,
+                                producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>
 {
 public:
-  using Base = SPMCBoundedQueueBase<T, SPMCBoundedQueue, producerKind, _MAX_CONSUMER_N_, Allocator>;
+  using Base = SPMCBoundedQueueBase<T, SPMCBoundedQueue, producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>;
+  using NodeAllocTraits = typename Base::NodeAllocTraits;
   using Node = typename Base::Node;
   using ConsumerTicket = typename Base::ConsumerTicket;
   using type = typename Base::type;
   using Base::Base;
   using Base::consume_blocking;
-  using Base::is_started;
+  using Base::is_running;
   using Base::is_stopped;
   using Base::start;
   using Base::stop;
@@ -48,10 +51,10 @@ public:
         {
 
           bool producer_need_to_accept = true;
-          if (!is_started())
+          if (!is_running())
           {
             Spinlock::scoped_lock autolock(this->start_guard_);
-            if (!is_started())
+            if (!is_running())
             {
               // if the queue has not started, then let's assign the next read idx by ourselves!
               this->consumers_progress_.at(i).store(0, std::memory_order_release);
@@ -137,7 +140,7 @@ public:
   template <class Producer, class... Args, bool blocking = Producer::blocking_v>
   ProducerReturnCode emplace(Producer& producer, Args&&... args) requires(producerKind == ProducerKind::Sequential)
   {
-    if (!is_started())
+    if (!is_running())
     {
       return ProducerReturnCode::NotStarted;
     }
@@ -165,7 +168,7 @@ public:
         }
       }
 
-      if (!is_started())
+      if (!is_running())
       {
         return ProducerReturnCode::NotStarted;
       }
@@ -193,7 +196,7 @@ public:
       }
     }
 
-    new (storage) T{std::forward<Args>(args)...}; // also supports aggregate initiazlization, but not in clang!
+    NodeAllocTraits::construct(this->alloc_, static_cast<T*>(storage), std::forward<Args>(args)...);
     node.version_.store(version + 1, std::memory_order_release);
     return ProducerReturnCode::Published;
   }
@@ -201,7 +204,7 @@ public:
   template <class Producer, class... Args, bool blocking = Producer::blocking_v>
   ProducerReturnCode emplace(Producer& producer, Args&&... args) requires(producerKind == ProducerKind::Unordered)
   {
-    if (!is_started())
+    if (!is_running())
     {
       return ProducerReturnCode::NotStarted;
     }
@@ -224,7 +227,7 @@ public:
 
       // while we inside a tight loop the queue might
       // have had stopped so we need to terminate the loop
-      if (!is_started())
+      if (!is_running())
       {
         return ProducerReturnCode::NotStarted;
       }
@@ -254,7 +257,7 @@ public:
       }
     }
 
-    new (storage) T{std::forward<Args>(args)...}; // also supports aggregate initialization - does not work in clang!
+    NodeAllocTraits::construct(this->alloc_, static_cast<T*>(storage), std::forward<Args>(args)...);
     node.version_.store(version + 1, std::memory_order_release);
     return ProducerReturnCode::Published;
   }

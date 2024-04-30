@@ -22,25 +22,7 @@
 #include <random>
 #include <thread>
 
-#include "utils.h"
-
-struct Order
-{
-  size_t id;
-  size_t vol;
-  double price;
-  char side;
-};
-
-struct OrderNonTrivial
-{
-  size_t id;
-  size_t vol;
-  double price;
-  char side;
-
-  ~OrderNonTrivial() {}
-};
+#include "common_test.h"
 
 TEST_CASE("Unordered SPMC attach detach test")
 {

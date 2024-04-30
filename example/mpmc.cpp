@@ -44,20 +44,14 @@ int main()
   Producer<Queue, blocking> p1(q1);
   Producer<Queue, blocking> p2(q2);
   {
-    auto r = p1.emplace(1u, 1u, 100.0, 'A');
-    assert(ProducerReturnCode::Published == r);
-    r = p2.emplace(2u, 2u, 100.0, 'A');
-    assert(ProducerReturnCode::Published == r);
+    p1.emplace(1u, 1u, 100.0, 'A');
+    p2.emplace(2u, 2u, 100.0, 'A');
   }
   {
-    auto r = c1[0].consume([](const Order& o) { std::cout << o; });
-    assert(ConsumerReturnCode::Consumed == r);
-    r = c2[0].consume([](const Order& o) { std::cout << o; });
-    assert(ConsumerReturnCode::Consumed == r);
-    r = c2[1].consume([](const Order& o) { std::cout << o; });
-    assert(ConsumerReturnCode::Consumed == r);
-    r = c1[1].consume([](const Order& o) { std::cout << o; });
-    assert(ConsumerReturnCode::Consumed == r);
+    c1[0].consume([](const Order& o) { std::cout << o; });
+    c2[0].consume([](const Order& o) { std::cout << o; });
+    c2[1].consume([](const Order& o) { std::cout << o; });
+    c1[1].consume([](const Order& o) { std::cout << o; });
   }
 
   return 0;
