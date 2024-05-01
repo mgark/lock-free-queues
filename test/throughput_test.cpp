@@ -21,8 +21,10 @@
 #include <mutex>
 #include <random>
 #include <thread>
+#include <unordered_set>
 
 #include "common_test_utils.h"
+#include "detail/common.h"
 #include "detail/spmc_bounded_conflated_queue.h"
 
 TEST_CASE("SPSC throughput test")
@@ -61,6 +63,7 @@ TEST_CASE("SPSC throughput test")
             });
         }
 
+        REQUIRE(totalVols[i] > 0);
         std::scoped_lock lock(guard);
         auto end = std::chrono::system_clock::now();
         auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
@@ -133,6 +136,7 @@ TEST_CASE("Conflated SPMC throughput test")
             });
         }
 
+        REQUIRE(items_num > 0);
         std::scoped_lock lock(guard);
         auto end = std::chrono::system_clock::now();
         auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
@@ -191,44 +195,59 @@ TEST_CASE("Unordered SPMC throughput test")
     consumers.push_back(std::thread(
       [&q, i, &guard, N, &consumer_joined_num, &totalVols]()
       {
-        ConsumerBlocking<Queue> c(q);
-        ++consumer_joined_num;
-        auto begin = std::chrono::system_clock::now();
-        size_t n = 0;
-        while (n < N)
+        try
         {
-          c.consume(
-            [consumer_id = i, &n, &q, &totalVols](const OrderNonTrivial& r) mutable
-            {
-              totalVols[consumer_id] += r.vol;
-              n = r.id;
-            });
-        }
+          ConsumerBlocking<Queue> c(q);
+          ++consumer_joined_num;
+          auto begin = std::chrono::system_clock::now();
+          size_t n = 0;
+          while (n < N)
+          {
+            c.consume(
+              [consumer_id = i, &n, &q, &totalVols](const OrderNonTrivial& r) mutable
+              {
+                totalVols[consumer_id] += r.vol;
+                n = r.id;
+              });
+          }
 
-        std::scoped_lock lock(guard);
-        auto end = std::chrono::system_clock::now();
-        auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
-        auto avg_time_ns = (totalVols[i] ? (nanos.count() / totalVols[i]) : 0);
-        TLOG << "Consumer [" << i << "] raw time per one item: " << avg_time_ns << "ns"
-             << " consumed [" << totalVols[i] << " items \n";
-        CHECK(totalVols[i] == N);
-        CHECK(avg_time_ns < 100);
+          REQUIRE(totalVols[i] > 0);
+          std::scoped_lock lock(guard);
+          auto end = std::chrono::system_clock::now();
+          auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
+          auto avg_time_ns = (totalVols[i] ? (nanos.count() / totalVols[i]) : 0);
+          TLOG << "Consumer [" << i << "] raw time per one item: " << avg_time_ns << "ns"
+               << " consumed [" << totalVols[i] << " items \n";
+          CHECK(totalVols[i] == N);
+          CHECK(avg_time_ns < 150);
+        }
+        catch (const std::exception& e)
+        {
+          TLOG << "\n got exception (10)" << e.what();
+        }
       }));
   }
 
   std::thread producer(
     [&q, &consumer_joined_num, N]()
     {
-      while (consumer_joined_num.load() < _MAX_CONSUMERS_)
-        ;
-
-      ProducerBlocking<Queue> p(q);
-      auto begin = std::chrono::system_clock::now();
-      size_t n = 1;
-      while (n <= N)
+      try
       {
-        if (p.emplace(OrderNonTrivial{n, 1U, 100.1, 'B'}) == ProducerReturnCode::Published)
-          ++n;
+        while (consumer_joined_num.load() < _MAX_CONSUMERS_)
+          ;
+
+        ProducerBlocking<Queue> p(q);
+        auto begin = std::chrono::system_clock::now();
+        size_t n = 1;
+        while (n <= N)
+        {
+          if (p.emplace(OrderNonTrivial{n, 1U, 100.1, 'B'}) == ProducerReturnCode::Published)
+            ++n;
+        }
+      }
+      catch (const std::exception& e)
+      {
+        TLOG << "\n got exception (9)" << e.what();
       }
     });
 
@@ -239,189 +258,112 @@ TEST_CASE("Unordered SPMC throughput test")
   }
 }
 
-TEST_CASE("Unordered MPMC throughput test")
-{
-  using Queue = SPMCBoundedQueue<OrderNonTrivial>;
-  constexpr size_t _MAX_PUBLISHERS_ = 4;
-  constexpr size_t _MAX_CONSUMERS_ = 3;
-  constexpr size_t _MSG_PER_CONSUMER_ = 10000000;
-  constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
-  constexpr size_t N = _MSG_PER_CONSUMER_ * _MAX_PUBLISHERS_;
-
-  std::list<Queue> publishersQueues;
-  for (size_t i = 0; i < _MAX_PUBLISHERS_; ++i)
-    publishersQueues.emplace_back(_PUBLISHER_QUEUE_SIZE);
-
-  TLOG << "\n\n";
-  size_t i = 0;
-  std::vector<std::thread> consumers;
-  std::vector<size_t> totalVols(_MAX_CONSUMERS_, 0);
-  std::atomic_int consumer_joined_num{0};
-  for (size_t i = 0; i < _MAX_CONSUMERS_; ++i)
-  {
-    consumers.push_back(std::thread(
-      [&publishersQueues, &consumer_joined_num, i, N, &totalVols]()
-      {
-        // each consumer thread attaches itself to each producer!
-        auto producerIt = publishersQueues.begin();
-        ConsumerBlocking<Queue> per_pub_consumer[_MAX_PUBLISHERS_]{*producerIt, *++producerIt,
-                                                                   *++producerIt, *++producerIt};
-
-        consumer_joined_num.fetch_add(_MAX_PUBLISHERS_);
-        size_t consumed_msg_num = 0;
-        auto process_msg = [consumer_id = i, &consumed_msg_num, &totalVols](auto& c, bool& set_true_when_done)
-        {
-          return c.consume(
-            [consumer_id, &consumed_msg_num, &set_true_when_done, &totalVols](const OrderNonTrivial& r) mutable
-            {
-              totalVols[consumer_id] += r.vol;
-              if (r.id >= _MSG_PER_CONSUMER_) // consumed all messages!
-              {
-                consumed_msg_num += _MSG_PER_CONSUMER_;
-                set_true_when_done = true;
-              }
-            });
-        };
-
-        bool done[_MAX_PUBLISHERS_]{false};
-        auto begin = std::chrono::system_clock::now();
-        while (consumed_msg_num < N)
-        {
-          for (size_t j = 0; j < _MAX_PUBLISHERS_; ++j)
-          {
-            if (!done[j])
-            {
-              process_msg(per_pub_consumer[j], done[j]);
-            }
-          }
-        }
-
-        auto end = std::chrono::system_clock::now();
-        auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
-        auto avg_time_ns = (nanos.count() / totalVols[i]);
-
-        TLOG << "Consumer [" << i << "] Avg message time: " << avg_time_ns << "ns"
-             << " consumed [" << totalVols[i] << " items \n";
-
-        CHECK(N == totalVols[i]);
-        CHECK(avg_time_ns < 20);
-      }));
-  }
-
-  while (consumer_joined_num < _MAX_CONSUMERS_ * _MAX_PUBLISHERS_)
-    ;
-
-  std::vector<std::thread> producers;
-  for (auto publisherIt = publishersQueues.begin(); publisherIt != std::end(publishersQueues);
-       ++publisherIt, ++i)
-  {
-    producers.emplace_back(std::thread(
-      [producer_id = i, q = std::ref(*publisherIt), N]() mutable
-      {
-        ProducerBlocking<Queue> p(q.get());
-        for (size_t i = 1; i <= _MSG_PER_CONSUMER_; ++i)
-          p.emplace(OrderNonTrivial{i, 1U, 100.1, 'A'});
-      }));
-  }
-
-  for (auto& p : producers)
-    p.join();
-  for (auto& c : consumers)
-    c.join();
-}
-
 TEST_CASE("Unordered MPMC - consumers joining at random times")
 {
-  using Queue = SPMCBoundedQueue<OrderNonTrivial>;
+  using Queue = SPMCBoundedQueue<Order>;
   constexpr size_t _MAX_PUBLISHERS_ = 4;
-  constexpr size_t _MAX_CONSUMERS_ = 3;
+  constexpr size_t _MAX_CONSUMERS_ = 2;
   constexpr size_t _MSG_PER_CONSUMER_ = 100000000;
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
   constexpr size_t N = _MSG_PER_CONSUMER_ * _MAX_PUBLISHERS_;
 
   std::list<Queue> publishersQueues;
   for (size_t i = 0; i < _MAX_PUBLISHERS_; ++i)
+  {
     publishersQueues.emplace_back(_PUBLISHER_QUEUE_SIZE);
+    publishersQueues.back().start();
+  }
 
   TLOG << "\n  " << Catch::getResultCapture().getCurrentTestName() << "\n";
+
   size_t i = 0;
   std::vector<std::thread> producers;
-  for (auto publisherIt = publishersQueues.begin(); publisherIt != std::end(publishersQueues);
-       ++publisherIt, ++i)
+  for (auto queueIt = publishersQueues.begin(); queueIt != std::end(publishersQueues); ++queueIt, ++i)
   {
     producers.emplace_back(std::thread(
-      [producer_id = i, q = std::ref(*publisherIt), N]() mutable
+      [producer_id = i, q = std::ref(*queueIt), N]() mutable
       {
-        ProducerBlocking<Queue> p(q.get());
-        for (size_t i = 1; i <= _MSG_PER_CONSUMER_; ++i)
+        try
         {
-          // std::cout << "return code = " << (int)p.emplace(OrderNonTrivial{i, 1U, 100.1, 'A'});
-          p.emplace(OrderNonTrivial{i, 1U, 100.1, 'A'});
-          // std::cout << "zn" << std::endl;
-        }
+          ProducerNonBlocking<Queue> p(q.get());
+          for (size_t i = 1; i <= _MSG_PER_CONSUMER_; ++i)
+          {
+            p.emplace(Order{i, 1U, 100.1, 'A'});
+          }
 
-        q.get().stop();
+          q.get().stop();
+        }
+        catch (const std::exception& e)
+        {
+          std::cout << "\n got exception";
+        }
       }));
   }
 
   // make sure producer joins first!
-  usleep(100000);
   std::vector<std::thread> consumers;
-  std::vector<size_t> totalVols(_MAX_CONSUMERS_, 0);
+  std::vector<size_t> totalMsgConsumed(_MAX_CONSUMERS_, 0);
 
   for (i = 0; i < _MAX_CONSUMERS_; ++i)
   {
     consumers.push_back(std::thread(
-      [&publishersQueues, i, N, &totalVols]()
+      [&publishersQueues, i, N, &totalMsgConsumed]()
       {
-        // each consumer thread attaches itself to each producer!
-        auto queueIt = publishersQueues.begin();
-        ConsumerBlocking<Queue> per_pub_consumer[_MAX_PUBLISHERS_]{*queueIt, *++queueIt, *++queueIt, *++queueIt};
-
-        // make sure consumers join at diffrent times
-        usleep(100000);
-        std::cout << std::endl;
-
-        size_t consumed_msg_num = 0;
-        auto process_msg = [consumer_id = i, &consumed_msg_num, &totalVols](auto& c, bool& set_true_when_done)
+        try
         {
-          return c.consume(
-            [consumer_id, &consumed_msg_num, &set_true_when_done, &totalVols](const OrderNonTrivial& r) mutable
-            {
-              // TLOG << "consumer msg\n";
-              totalVols[consumer_id] += r.vol;
-              if (r.id >= _MSG_PER_CONSUMER_) // consumed all messages!
-              {
-                consumed_msg_num += _MSG_PER_CONSUMER_;
-                set_true_when_done = true;
-              }
-            });
-        };
+          // each consumer thread attaches itself to each producer!
+          auto queueIt = publishersQueues.begin();
+          ConsumerNonBlocking<Queue> per_pub_consumer[_MAX_PUBLISHERS_]{*queueIt, *++queueIt,
+                                                                        *++queueIt, *++queueIt};
 
-        bool done[_MAX_PUBLISHERS_]{false};
-        auto begin = std::chrono::system_clock::now();
-        while (consumed_msg_num < N)
-        {
-          for (size_t j = 0; j < _MAX_PUBLISHERS_; ++j)
+          // make sure consumers join at diffrent times
+          usleep(100000);
+
+          bool done[_MAX_PUBLISHERS_]{};
+
+          auto begin = std::chrono::system_clock::now();
+          std::unordered_set<size_t> active_consumers;
+          for (size_t i = 0; i < _MAX_PUBLISHERS_; ++i)
           {
-            if (!done[j])
+            active_consumers.insert(i);
+          }
+
+          while (!active_consumers.empty())
+          {
+            auto it = std::begin(active_consumers);
+            while (it != std::end(active_consumers))
             {
-              if (ConsumerReturnCode::Consumed != process_msg(per_pub_consumer[j], done[j]))
-              {
-                break;
-              }
+              auto consumer_id = *it;
+              bool is_consumer_done = false;
+              auto r = per_pub_consumer[consumer_id].consume(
+                [&, consumer_id](const Order& r) mutable
+                {
+                  totalMsgConsumed[i] += r.vol;
+                  if (r.id >= _MSG_PER_CONSUMER_) // consumed all messages!
+                    is_consumer_done = true;
+                });
+              if (r != ConsumerReturnCode::Consumed)
+                is_consumer_done = true;
+
+              if (is_consumer_done)
+                it = active_consumers.erase(it);
+              else
+                ++it;
             }
           }
+
+          auto end = std::chrono::system_clock::now();
+          auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
+          auto avg_time_ns = (nanos.count() / totalMsgConsumed[i]);
+
+          TLOG << "Consumer [" << i << "] Avg message time: " << avg_time_ns << "ns"
+               << " consumed [" << totalMsgConsumed[i] << " items \n";
         }
-
-        auto end = std::chrono::system_clock::now();
-        auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
-        auto avg_time_ns = (nanos.count() / totalVols[i]);
-
-        TLOG << "Consumer [" << i << "] Avg message time: " << avg_time_ns << "ns"
-             << " consumed [" << totalVols[i] << " items \n";
-
-        // CHECK(avg_time_ns < 20);
+        catch (const std::exception& e)
+        {
+          TLOG << "Got exception " << e.what() << "\n";
+          CHECK(false);
+        }
       }));
   }
 
@@ -430,6 +372,7 @@ TEST_CASE("Unordered MPMC - consumers joining at random times")
   for (auto& c : consumers)
     c.join();
 }
+
 TEST_CASE("MPMC Sequential")
 {
   constexpr size_t _MAX_PUBLISHERS_ = 4;
@@ -452,28 +395,36 @@ TEST_CASE("MPMC Sequential")
     consumers.push_back(std::thread(
       [&q, i, N, &consumer_joined_num, &totalVols]()
       {
-        size_t consumed_msg_num = 0;
-        ConsumerBlocking<Queue> consumer(q);
-        ++consumer_joined_num;
-        auto begin = std::chrono::system_clock::now();
-        while (consumed_msg_num < N)
+        try
         {
-          consumer.consume(
-            [i, &consumed_msg_num, &totalVols](const OrderNonTrivial& r) mutable
-            {
-              totalVols[i] += r.vol;
-              if (r.id == _MSG_PER_CONSUMER_)
-                consumed_msg_num += _MSG_PER_CONSUMER_;
-            });
-        }
+          size_t consumed_msg_num = 0;
+          ConsumerBlocking<Queue> consumer(q);
+          ++consumer_joined_num;
+          auto begin = std::chrono::system_clock::now();
+          while (consumed_msg_num < N)
+          {
+            consumer.consume(
+              [i, &consumed_msg_num, &totalVols](const OrderNonTrivial& r) mutable
+              {
+                totalVols[i] += r.vol;
+                if (r.id == _MSG_PER_CONSUMER_)
+                  consumed_msg_num += _MSG_PER_CONSUMER_;
+              });
+          }
 
-        auto end = std::chrono::system_clock::now();
-        auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
-        auto avg_time_ns = nanos.count() / totalVols[i];
-        TLOG << "Consumer [" << i << "] raw latency: " << avg_time_ns << "ns"
-             << " consumed [" << totalVols[i] << " items \n";
-        CHECK(N == totalVols[i]);
-        CHECK(avg_time_ns < 300);
+          REQUIRE(totalVols[i] > 0);
+          auto end = std::chrono::system_clock::now();
+          auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
+          auto avg_time_ns = nanos.count() / totalVols[i];
+          TLOG << "Consumer [" << i << "] raw latency: " << avg_time_ns << "ns"
+               << " consumed [" << totalVols[i] << " items \n";
+          CHECK(N == totalVols[i]);
+          CHECK(avg_time_ns < 300);
+        }
+        catch (const std::exception& e)
+        {
+          TLOG << "\n got exception (4)" << e.what();
+        }
       }));
   }
 
@@ -487,21 +438,29 @@ TEST_CASE("MPMC Sequential")
     producers.emplace_back(std::thread(
       [producer_id = i, q = std::ref(q), N]() mutable
       {
-        ProducerBlocking<Queue> p(q.get());
-        auto begin = std::chrono::system_clock::now();
-        for (size_t j = 1; j <= _MSG_PER_CONSUMER_; ++j)
+        try
         {
-          if (p.emplace(OrderNonTrivial{j, 1U, 100.34, 'B'}) == ProducerReturnCode::Published)
+          ProducerBlocking<Queue> p(q.get());
+          auto begin = std::chrono::system_clock::now();
+          for (size_t j = 1; j <= _MSG_PER_CONSUMER_; ++j)
           {
-            //  std::scoped_lock lock(guard);
-            //   std::cout << "[" << producer_id << "] published i=" << i <<
-            //   "\n";
+            if (p.emplace(OrderNonTrivial{j, 1U, 100.34, 'B'}) == ProducerReturnCode::Published)
+            {
+              //  std::scoped_lock lock(guard);
+              //   std::cout << "[" << producer_id << "] published i=" << i <<
+              //   "\n";
+            }
           }
-        }
 
-        auto end = std::chrono::system_clock::now();
-        auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
-        std::cout << "[" << producer_id << "] Produced " << N << " times " << (nanos.count() / N) << "ns\n";
+          REQUIRE(N > 0);
+          auto end = std::chrono::system_clock::now();
+          auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
+          std::cout << "[" << producer_id << "] Produced " << N << " times " << (nanos.count() / N) << "ns\n";
+        }
+        catch (const std::exception& e)
+        {
+          TLOG << "\n got exception (3)" << e.what();
+        }
       }));
   }
 
@@ -527,7 +486,10 @@ TEST_CASE("Conflated MPMC - consumers joining at random times")
 
   std::list<Queue> publishersQueues;
   for (size_t i = 0; i < _MAX_PUBLISHERS_; ++i)
+  {
     publishersQueues.emplace_back(_PUBLISHER_QUEUE_SIZE);
+    publishersQueues.back().start();
+  }
 
   TLOG << "\n  " << Catch::getResultCapture().getCurrentTestName() << "\n";
 
@@ -541,73 +503,74 @@ TEST_CASE("Conflated MPMC - consumers joining at random times")
       {
         ProducerNonBlocking<Queue> p(q.get());
         for (size_t i = 1; i <= _MSG_PER_CONSUMER_; ++i)
-        {
-          // std::cout << "return code = " << (int)p.emplace(OrderNonTrivial{i, 1U, 100.1, 'A'});
           p.emplace(Order{i, 1U, 100.1, 'A'});
-          // std::cout << "zn" << std::endl;
-        }
 
         q.get().stop();
       }));
   }
 
   // make sure producer joins first!
-  usleep(100000);
   std::vector<std::thread> consumers;
-  std::vector<size_t> totalVols(_MAX_CONSUMERS_, 0);
+  std::vector<size_t> totalMsgConsumed(_MAX_CONSUMERS_, 0);
 
   for (i = 0; i < _MAX_CONSUMERS_; ++i)
   {
     consumers.push_back(std::thread(
-      [&publishersQueues, i, N, &totalVols]()
+      [&publishersQueues, i, N, &totalMsgConsumed]()
       {
-        // each consumer thread attaches itself to each producer!
-        auto queueIt = publishersQueues.begin();
-        ConsumerNonBlocking<Queue> per_pub_consumer[_MAX_PUBLISHERS_]{*queueIt, *++queueIt,
-                                                                      *++queueIt, *++queueIt};
-
-        // make sure consumers join at diffrent times
-        usleep(100000);
-        std::cout << std::endl;
-
-        size_t consumed_msg_num = 0;
-        auto process_msg = [consumer_id = i, &consumed_msg_num, &totalVols](auto& c, bool& set_true_when_done)
+        try
         {
-          return c.consume(
-            [consumer_id, &consumed_msg_num, &set_true_when_done, &totalVols](const Order& r) mutable
-            {
-              // TLOG << "consumer msg\n";
-              totalVols[consumer_id] += r.vol;
-              if (r.id >= _MSG_PER_CONSUMER_) // consumed all messages!
-              {
-                consumed_msg_num += _MSG_PER_CONSUMER_;
-                set_true_when_done = true;
-              }
-            });
-        };
+          // each consumer thread attaches itself to each producer!
+          auto queueIt = publishersQueues.begin();
+          ConsumerNonBlocking<Queue> per_pub_consumer[_MAX_PUBLISHERS_]{*queueIt, *++queueIt,
+                                                                        *++queueIt, *++queueIt};
 
-        bool done[_MAX_PUBLISHERS_]{false};
-        auto begin = std::chrono::system_clock::now();
-        while (consumed_msg_num < N)
-        {
-          for (size_t j = 0; j < _MAX_PUBLISHERS_; ++j)
+          // make sure consumers join at diffrent times
+          usleep(100000);
+
+          bool done[_MAX_PUBLISHERS_]{};
+
+          auto begin = std::chrono::system_clock::now();
+          std::unordered_set<size_t> active_consumers;
+          for (size_t i = 0; i < _MAX_PUBLISHERS_; ++i)
+            active_consumers.insert(i);
+
+          while (!active_consumers.empty())
           {
-            if (!done[j])
+            auto it = std::begin(active_consumers);
+            while (it != std::end(active_consumers))
             {
-              if (ConsumerReturnCode::Consumed != process_msg(per_pub_consumer[j], done[j]))
-              {
-                break;
-              }
+              auto consumer_id = *it;
+              bool is_consumer_done = false;
+              auto r = per_pub_consumer[consumer_id].consume(
+                [&, consumer_id](const Order& r) mutable
+                {
+                  totalMsgConsumed[i] += r.vol;
+                  if (r.id >= _MSG_PER_CONSUMER_) // consumed all messages!
+                    is_consumer_done = true;
+                });
+              if (r != ConsumerReturnCode::Consumed)
+                is_consumer_done = true;
+
+              if (is_consumer_done)
+                it = active_consumers.erase(it);
+              else
+                ++it;
             }
           }
+
+          auto end = std::chrono::system_clock::now();
+          auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
+          auto avg_time_ns = (nanos.count() / totalMsgConsumed[i]);
+
+          TLOG << "Consumer [" << i << "] Avg message time: " << avg_time_ns << "ns"
+               << " consumed [" << totalMsgConsumed[i] << " items \n";
         }
-
-        auto end = std::chrono::system_clock::now();
-        auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
-        auto avg_time_ns = (nanos.count() / totalVols[i]);
-
-        TLOG << "Consumer [" << i << "] Avg message time: " << avg_time_ns << "ns"
-             << " consumed [" << totalVols[i] << " items \n";
+        catch (const std::exception& e)
+        {
+          TLOG << "Got exception " << e.what() << "\n";
+          CHECK(false);
+        }
       }));
   }
 

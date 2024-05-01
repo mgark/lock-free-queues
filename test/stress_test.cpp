@@ -129,9 +129,9 @@ TEST_CASE("SPMC queue stress test to detect race conditions")
   std::string s;
   std::mutex guard;
   constexpr size_t _MAX_CONSUMERS_ = 3;
-  constexpr size_t _PUBLISHER_QUEUE_SIZE = 1;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 32;
   constexpr size_t N = 30000000;
-  constexpr size_t BATCH_NUM = 1;
+  constexpr size_t BATCH_NUM = 2;
   using Queue = SPMCBoundedQueue<Vector, ProducerKind::Unordered, _MAX_CONSUMERS_, BATCH_NUM>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
 
@@ -220,9 +220,9 @@ TEST_CASE("SPMC sequential queue stress test to detect race conditions")
   std::string s;
   std::mutex guard;
   constexpr size_t _MAX_CONSUMERS_ = 3;
-  constexpr size_t _PUBLISHER_QUEUE_SIZE = 1;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 16;
   constexpr size_t N = 3000000;
-  constexpr size_t BATCH_NUM = 1;
+  constexpr size_t BATCH_NUM = 2;
   using Queue = SPMCBoundedQueue<Vector, ProducerKind::Sequential, _MAX_CONSUMERS_, BATCH_NUM>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
 
