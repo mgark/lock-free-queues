@@ -39,9 +39,9 @@ int main()
   Queue q2(8);
 
   constexpr bool blocking = true;
-  Consumer<Queue, blocking> c1[2] = {q1, q2};
-  Producer<Queue, blocking> p1(q1);
-  Producer<Queue, blocking> p2(q2);
+  ConsumerBlocking<Queue> c1[2] = {q1, q2};
+  ProducerBlocking<Queue> p1(q1);
+  ProducerBlocking<Queue> p2(q2);
   {
     p1.emplace(1u, 1u, 100.0, 'A');
     p2.emplace(2u, 2u, 100.0, 'A');

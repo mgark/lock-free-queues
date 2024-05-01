@@ -41,9 +41,9 @@ int main()
   Queue q(2); // only hold 2 slots in the ring buffer
 
   constexpr bool blocking = true;
-  Consumer<Queue, blocking> c1(q);
-  Consumer<Queue, blocking> c2(q);
-  Producer<Queue, blocking> p(q);
+  ConsumerBlocking<Queue> c1(q);
+  ConsumerBlocking<Queue> c2(q);
+  ProducerBlocking<Queue> p(q);
   {
     p.emplace(1u, 1u, 100.0, 'A');
     p.emplace(2u, 2u, 100.0, 'A');

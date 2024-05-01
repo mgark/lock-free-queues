@@ -1,4 +1,4 @@
-#include "common_test.h"
+#include "common_test_utils.h"
 #include "detail/common.h"
 #include <algorithm>
 #include <assert.h>
@@ -41,7 +41,7 @@ TEST_CASE("SPMC conflated queue stress test to detect race conditions")
   constexpr size_t BATCH_NUM = 1;
   using Queue = SPMCBoundedConflatedQueue<Vector, ProducerKind::Unordered, _MAX_CONSUMERS_, BATCH_NUM>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
-  Producer<Queue, true> p(q);
+  ProducerBlocking<Queue> p(q);
 
   size_t from = std::chrono::system_clock::now().time_since_epoch().count();
   std::vector<std::thread> consumers;
@@ -54,7 +54,7 @@ TEST_CASE("SPMC conflated queue stress test to detect race conditions")
     consumers.push_back(std::thread(
       [&q, i, &guard, N, sum, &consumer_joined_num, &totalVols]()
       {
-        Consumer<Queue, true> c(q);
+        ConsumerBlocking<Queue> c(q);
         size_t n = 0;
         ++consumer_joined_num;
         auto begin = std::chrono::system_clock::now();
@@ -145,7 +145,7 @@ TEST_CASE("SPMC queue stress test to detect race conditions")
     consumers.push_back(std::thread(
       [&q, i, &guard, N, sum, &consumer_joined_num]()
       {
-        Consumer<Queue, true> c(q);
+        ConsumerBlocking<Queue> c(q);
         ++consumer_joined_num;
         size_t n = 0;
         auto begin = std::chrono::system_clock::now();
@@ -168,7 +168,7 @@ TEST_CASE("SPMC queue stress test to detect race conditions")
       while (consumer_joined_num.load() < _MAX_CONSUMERS_)
         ;
 
-      Producer<Queue, true> p(q);
+      ProducerBlocking<Queue> p(q);
       from = std::chrono::system_clock::now().time_since_epoch().count();
       size_t n = 1;
       while (n <= N)
@@ -236,7 +236,7 @@ TEST_CASE("SPMC sequential queue stress test to detect race conditions")
     consumers.push_back(std::thread(
       [&q, i, &guard, N, sum, &consumer_joined_num]()
       {
-        Consumer<Queue, true> c(q);
+        ConsumerBlocking<Queue> c(q);
         size_t n = 0;
         ++consumer_joined_num;
         auto begin = std::chrono::system_clock::now();
@@ -259,7 +259,7 @@ TEST_CASE("SPMC sequential queue stress test to detect race conditions")
       while (consumer_joined_num.load() < _MAX_CONSUMERS_)
         ;
 
-      Producer<Queue, true> p(q);
+      ProducerBlocking<Queue> p(q);
       from = std::chrono::system_clock::now().time_since_epoch().count();
       size_t n = 1;
       while (n <= N)

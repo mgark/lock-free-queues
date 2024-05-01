@@ -38,9 +38,9 @@ int main()
   Queue q(8);
 
   constexpr bool blocking = true;
-  Consumer<Queue, blocking> c1(q);
-  Consumer<Queue, blocking> c2(q);
-  Producer<Queue, blocking> p(q);
+  ConsumerBlocking<Queue> c1(q);
+  ConsumerBlocking<Queue> c2(q);
+  ProducerBlocking<Queue> p(q);
 
   p.emplace(1u, 1u, 100.0, 'A');
   c1.consume([&q](const Order& o) mutable { std::cout << o; });

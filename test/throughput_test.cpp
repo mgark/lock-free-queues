@@ -22,7 +22,7 @@
 #include <random>
 #include <thread>
 
-#include "common_test.h"
+#include "common_test_utils.h"
 #include "detail/spmc_bounded_conflated_queue.h"
 
 TEST_CASE("SPSC throughput test")
@@ -47,7 +47,7 @@ TEST_CASE("SPSC throughput test")
     consumers.push_back(std::thread(
       [&q, i, &guard, N, &consumer_joined_num, &totalVols]()
       {
-        Consumer<Queue, true> c(q);
+        ConsumerBlocking<Queue> c(q);
         ++consumer_joined_num;
         auto begin = std::chrono::system_clock::now();
         size_t n = 0;
@@ -78,7 +78,7 @@ TEST_CASE("SPSC throughput test")
       while (consumer_joined_num.load() < _MAX_CONSUMERS_)
         ;
 
-      Producer<Queue, true> p(q);
+      ProducerBlocking<Queue> p(q);
       auto begin = std::chrono::system_clock::now();
       size_t n = 1;
       while (n <= N)
@@ -117,7 +117,7 @@ TEST_CASE("Conflated SPMC throughput test")
     consumers.push_back(std::thread(
       [&q, i, &guard, N, &consumer_joined_num, &totalVols]()
       {
-        Consumer<Queue, true> c(q);
+        ConsumerBlocking<Queue> c(q);
         ++consumer_joined_num;
         auto begin = std::chrono::system_clock::now();
         size_t n = 0;
@@ -152,7 +152,7 @@ TEST_CASE("Conflated SPMC throughput test")
       while (consumer_joined_num.load() < _MAX_CONSUMERS_)
         ;
 
-      Producer<Queue, true> p(q);
+      ProducerBlocking<Queue> p(q);
       from = std::chrono::system_clock::now().time_since_epoch().count();
       size_t n = 1;
       while (n <= N)
@@ -191,7 +191,7 @@ TEST_CASE("Unordered SPMC throughput test")
     consumers.push_back(std::thread(
       [&q, i, &guard, N, &consumer_joined_num, &totalVols]()
       {
-        Consumer<Queue, true> c(q);
+        ConsumerBlocking<Queue> c(q);
         ++consumer_joined_num;
         auto begin = std::chrono::system_clock::now();
         size_t n = 0;
@@ -222,7 +222,7 @@ TEST_CASE("Unordered SPMC throughput test")
       while (consumer_joined_num.load() < _MAX_CONSUMERS_)
         ;
 
-      Producer<Queue, true> p(q);
+      ProducerBlocking<Queue> p(q);
       auto begin = std::chrono::system_clock::now();
       size_t n = 1;
       while (n <= N)
@@ -264,8 +264,8 @@ TEST_CASE("Unordered MPMC throughput test")
       {
         // each consumer thread attaches itself to each producer!
         auto producerIt = publishersQueues.begin();
-        Consumer<Queue, false> per_pub_consumer[_MAX_PUBLISHERS_]{*producerIt, *++producerIt,
-                                                                  *++producerIt, *++producerIt};
+        ConsumerBlocking<Queue> per_pub_consumer[_MAX_PUBLISHERS_]{*producerIt, *++producerIt,
+                                                                   *++producerIt, *++producerIt};
 
         consumer_joined_num.fetch_add(_MAX_PUBLISHERS_);
         size_t consumed_msg_num = 0;
@@ -318,7 +318,7 @@ TEST_CASE("Unordered MPMC throughput test")
     producers.emplace_back(std::thread(
       [producer_id = i, q = std::ref(*publisherIt), N]() mutable
       {
-        Producer<Queue, true> p(q.get());
+        ProducerBlocking<Queue> p(q.get());
         for (size_t i = 1; i <= _MSG_PER_CONSUMER_; ++i)
           p.emplace(OrderNonTrivial{i, 1U, 100.1, 'A'});
       }));
@@ -352,7 +352,7 @@ TEST_CASE("Unordered MPMC - consumers joining at random times")
     producers.emplace_back(std::thread(
       [producer_id = i, q = std::ref(*publisherIt), N]() mutable
       {
-        Producer<Queue, true> p(q.get());
+        ProducerBlocking<Queue> p(q.get());
         for (size_t i = 1; i <= _MSG_PER_CONSUMER_; ++i)
         {
           // std::cout << "return code = " << (int)p.emplace(OrderNonTrivial{i, 1U, 100.1, 'A'});
@@ -376,7 +376,7 @@ TEST_CASE("Unordered MPMC - consumers joining at random times")
       {
         // each consumer thread attaches itself to each producer!
         auto queueIt = publishersQueues.begin();
-        Consumer<Queue, false> per_pub_consumer[_MAX_PUBLISHERS_]{*queueIt, *++queueIt, *++queueIt, *++queueIt};
+        ConsumerBlocking<Queue> per_pub_consumer[_MAX_PUBLISHERS_]{*queueIt, *++queueIt, *++queueIt, *++queueIt};
 
         // make sure consumers join at diffrent times
         usleep(100000);
@@ -453,7 +453,7 @@ TEST_CASE("MPMC Sequential")
       [&q, i, N, &consumer_joined_num, &totalVols]()
       {
         size_t consumed_msg_num = 0;
-        Consumer<Queue, true> consumer(q);
+        ConsumerBlocking<Queue> consumer(q);
         ++consumer_joined_num;
         auto begin = std::chrono::system_clock::now();
         while (consumed_msg_num < N)
@@ -487,7 +487,7 @@ TEST_CASE("MPMC Sequential")
     producers.emplace_back(std::thread(
       [producer_id = i, q = std::ref(q), N]() mutable
       {
-        Producer<Queue, true> p(q.get());
+        ProducerBlocking<Queue> p(q.get());
         auto begin = std::chrono::system_clock::now();
         for (size_t j = 1; j <= _MSG_PER_CONSUMER_; ++j)
         {
@@ -539,7 +539,7 @@ TEST_CASE("Conflated MPMC - consumers joining at random times")
     producers.emplace_back(std::thread(
       [producer_id = i, q = std::ref(*publisherIt), N]() mutable
       {
-        Producer<Queue> p(q.get());
+        ProducerNonBlocking<Queue> p(q.get());
         for (size_t i = 1; i <= _MSG_PER_CONSUMER_; ++i)
         {
           // std::cout << "return code = " << (int)p.emplace(OrderNonTrivial{i, 1U, 100.1, 'A'});
@@ -563,7 +563,8 @@ TEST_CASE("Conflated MPMC - consumers joining at random times")
       {
         // each consumer thread attaches itself to each producer!
         auto queueIt = publishersQueues.begin();
-        Consumer<Queue, false> per_pub_consumer[_MAX_PUBLISHERS_]{*queueIt, *++queueIt, *++queueIt, *++queueIt};
+        ConsumerNonBlocking<Queue> per_pub_consumer[_MAX_PUBLISHERS_]{*queueIt, *++queueIt,
+                                                                      *++queueIt, *++queueIt};
 
         // make sure consumers join at diffrent times
         usleep(100000);

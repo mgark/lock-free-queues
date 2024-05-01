@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "common_test.h"
+#include "common_test_utils.h"
 #include <assert.h>
 #include <catch2/catch_all.hpp>
 #include <mpmc.h>
@@ -26,10 +26,10 @@ TEST_CASE("SPMC functional test")
   Queue q2(8);
 
   constexpr bool blocking = true;
-  Consumer<Queue, blocking> c1[2] = {q1, q2};
-  Consumer<Queue, blocking> c2[2] = {q1, q2};
-  Producer<Queue, blocking> p1(q1);
-  Producer<Queue, blocking> p2(q2);
+  ConsumerBlocking<Queue> c1[2] = {q1, q2};
+  ConsumerBlocking<Queue> c2[2] = {q1, q2};
+  ProducerBlocking<Queue> p1(q1);
+  ProducerBlocking<Queue> p2(q2);
   {
     auto r = p1.emplace(1u, 1u, 100.0, 'A');
     CHECK(ProducerReturnCode::Published == r);

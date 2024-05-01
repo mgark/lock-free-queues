@@ -22,7 +22,7 @@
 #include <random>
 #include <thread>
 
-#include "common_test.h"
+#include "common_test_utils.h"
 
 TEST_CASE("Unordered SPMC attach detach test")
 {
@@ -52,7 +52,7 @@ TEST_CASE("Unordered SPMC attach detach test")
         {
           size_t consumed_num = 0;
           auto begin = std::chrono::system_clock::now();
-          Consumer<Queue, true> c(q);
+          ConsumerBlocking<Queue> c(q);
           ++consumer_joined_num;
           while (consumed_num < CONSUMER_N)
           {
@@ -79,7 +79,7 @@ TEST_CASE("Unordered SPMC attach detach test")
       while (consumer_joined_num.load() < _MAX_CONSUMERS_)
         ;
 
-      Producer<Queue, true> p(q);
+      ProducerBlocking<Queue> p(q);
       auto begin = std::chrono::system_clock::now();
       size_t n = 1;
       while (n <= N)

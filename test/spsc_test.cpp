@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "common_test.h"
+#include "common_test_utils.h"
 #include <assert.h>
 #include <catch2/catch_all.hpp>
 #include <mpmc.h>
@@ -25,8 +25,8 @@ TEST_CASE("SPSC functional test")
   Queue q(8);
 
   constexpr bool blocking = true;
-  Consumer<Queue, blocking> c(q);
-  Producer<Queue, blocking> p(q);
+  ConsumerBlocking<Queue> c(q);
+  ProducerBlocking<Queue> p(q);
 
   {
     auto r = p.emplace(1u, 1u, 100.0, 'A');
