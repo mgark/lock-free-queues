@@ -319,36 +319,28 @@ TEST_CASE("Unordered MPMC - consumers joining at random times")
           // make sure consumers join at diffrent times
           usleep(100000);
 
-          bool done[_MAX_PUBLISHERS_]{};
-
           auto begin = std::chrono::system_clock::now();
-          std::unordered_set<size_t> active_consumers;
-          for (size_t i = 0; i < _MAX_PUBLISHERS_; ++i)
+          bool finished = false;
+          while (!finished)
           {
-            active_consumers.insert(i);
-          }
-
-          while (!active_consumers.empty())
-          {
-            auto it = std::begin(active_consumers);
-            while (it != std::end(active_consumers))
+            for (size_t consumer_id = 0; consumer_id < _MAX_PUBLISHERS_; ++consumer_id)
             {
-              auto consumer_id = *it;
               bool is_consumer_done = false;
               auto r = per_pub_consumer[consumer_id].consume(
-                [&, consumer_id](const Order& r) mutable
+                [&](const Order& r) mutable
                 {
                   totalMsgConsumed[i] += r.vol;
                   if (r.id >= _MSG_PER_CONSUMER_) // consumed all messages!
                     is_consumer_done = true;
                 });
-              if (r != ConsumerReturnCode::Consumed)
+              if (r == ConsumerReturnCode::Stopped)
                 is_consumer_done = true;
 
               if (is_consumer_done)
-                it = active_consumers.erase(it);
-              else
-                ++it;
+              {
+                finished = true;
+                break;
+              }
             }
           }
 
@@ -480,7 +472,7 @@ TEST_CASE("Conflated MPMC - consumers joining at random times")
   using Queue = SPMCBoundedConflatedQueue<Order>;
   constexpr size_t _MAX_PUBLISHERS_ = 4;
   constexpr size_t _MAX_CONSUMERS_ = 2;
-  constexpr size_t _MSG_PER_CONSUMER_ = 100000000;
+  constexpr size_t _MSG_PER_CONSUMER_ = 2000000000;
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
   constexpr size_t N = _MSG_PER_CONSUMER_ * _MAX_PUBLISHERS_;
 
@@ -528,34 +520,28 @@ TEST_CASE("Conflated MPMC - consumers joining at random times")
           // make sure consumers join at diffrent times
           usleep(100000);
 
-          bool done[_MAX_PUBLISHERS_]{};
-
           auto begin = std::chrono::system_clock::now();
-          std::unordered_set<size_t> active_consumers;
-          for (size_t i = 0; i < _MAX_PUBLISHERS_; ++i)
-            active_consumers.insert(i);
-
-          while (!active_consumers.empty())
+          bool finished = false;
+          while (!finished)
           {
-            auto it = std::begin(active_consumers);
-            while (it != std::end(active_consumers))
+            for (size_t consumer_id = 0; consumer_id < _MAX_PUBLISHERS_; ++consumer_id)
             {
-              auto consumer_id = *it;
               bool is_consumer_done = false;
               auto r = per_pub_consumer[consumer_id].consume(
-                [&, consumer_id](const Order& r) mutable
+                [&](const Order& r) mutable
                 {
                   totalMsgConsumed[i] += r.vol;
                   if (r.id >= _MSG_PER_CONSUMER_) // consumed all messages!
                     is_consumer_done = true;
                 });
-              if (r != ConsumerReturnCode::Consumed)
+              if (r == ConsumerReturnCode::Stopped)
                 is_consumer_done = true;
 
               if (is_consumer_done)
-                it = active_consumers.erase(it);
-              else
-                ++it;
+              {
+                finished = true;
+                break; // any customer is done, we are done here as well
+              }
             }
           }
 
