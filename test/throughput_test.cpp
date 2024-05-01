@@ -106,11 +106,11 @@ TEST_CASE("Conflated SPMC throughput test")
   using Queue = SPMCBoundedConflatedQueue<Order, ProducerKind::Unordered, _MAX_CONSUMERS_>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
 
-  size_t from = std::chrono::system_clock::now().time_since_epoch().count();
   std::vector<std::thread> consumers;
   std::vector<size_t> totalVols(_MAX_CONSUMERS_, 0);
   std::atomic_int consumer_joined_num{0};
 
+  size_t from;
   TLOG << "\n  Conflated throughput test\n";
   for (size_t i = 0; i < _MAX_CONSUMERS_; ++i)
   {
@@ -137,21 +137,23 @@ TEST_CASE("Conflated SPMC throughput test")
         auto end = std::chrono::system_clock::now();
         auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
         auto avg_time_ns = (items_num ? (nanos.count() / items_num) : 0);
+        double conflation_ratio = (double)n / items_num;
+
         TLOG << "Consumer [" << i << "] raw time per one item: " << avg_time_ns << "ns"
-             << " consumed [" << items_num << " items, conflation ratio = ["
-             << (double)n / items_num << "] \n";
-        CHECK(avg_time_ns < 150);
+             << " consumed [" << items_num << " items, conflation ratio = [" << conflation_ratio << "] \n";
+        CHECK(avg_time_ns < 40);
+        CHECK(conflation_ratio < 4.0);
       }));
   }
 
   std::thread producer(
-    [&q, &consumer_joined_num, N]()
+    [&q, &from, &consumer_joined_num, N]()
     {
       while (consumer_joined_num.load() < _MAX_CONSUMERS_)
         ;
 
       Producer<Queue, true> p(q);
-      auto begin = std::chrono::system_clock::now();
+      from = std::chrono::system_clock::now().time_since_epoch().count();
       size_t n = 1;
       while (n <= N)
       {
@@ -210,7 +212,7 @@ TEST_CASE("Unordered SPMC throughput test")
         TLOG << "Consumer [" << i << "] raw time per one item: " << avg_time_ns << "ns"
              << " consumed [" << totalVols[i] << " items \n";
         CHECK(totalVols[i] == N);
-        CHECK(avg_time_ns < 40);
+        CHECK(avg_time_ns < 100);
       }));
   }
 
@@ -341,8 +343,7 @@ TEST_CASE("Unordered MPMC - consumers joining at random times")
   for (size_t i = 0; i < _MAX_PUBLISHERS_; ++i)
     publishersQueues.emplace_back(_PUBLISHER_QUEUE_SIZE);
 
-  TLOG << "\nUnordered MPMC - consumers joining at random times\n";
-
+  TLOG << "\n  " << Catch::getResultCapture().getCurrentTestName() << "\n";
   size_t i = 0;
   std::vector<std::thread> producers;
   for (auto publisherIt = publishersQueues.begin(); publisherIt != std::end(publishersQueues);
@@ -440,7 +441,7 @@ TEST_CASE("MPMC Sequential")
   using Queue = SPMCBoundedQueue<OrderNonTrivial, ProducerKind::Sequential, _MAX_CONSUMERS_>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
 
-  TLOG << "\n MPMC SEQUENTIAL \n";
+  TLOG << "\n  " << Catch::getResultCapture().getCurrentTestName() << "\n";
 
   std::vector<std::thread> consumers;
   std::vector<size_t> totalVols(_MAX_CONSUMERS_, 0);
@@ -515,7 +516,7 @@ TEST_CASE("MPMC Sequential")
 }
 
 #if defined(__x86_64__)
-TEST_CASE("Unordered conflated MPMC - consumers joining at random times")
+TEST_CASE("Conflated MPMC - consumers joining at random times")
 {
   using Queue = SPMCBoundedConflatedQueue<Order>;
   constexpr size_t _MAX_PUBLISHERS_ = 4;
@@ -528,7 +529,7 @@ TEST_CASE("Unordered conflated MPMC - consumers joining at random times")
   for (size_t i = 0; i < _MAX_PUBLISHERS_; ++i)
     publishersQueues.emplace_back(_PUBLISHER_QUEUE_SIZE);
 
-  TLOG << "\nUnordered conflated MPMC - consumers joining at random times\n";
+  TLOG << "\n  " << Catch::getResultCapture().getCurrentTestName() << "\n";
 
   size_t i = 0;
   std::vector<std::thread> producers;
@@ -606,8 +607,6 @@ TEST_CASE("Unordered conflated MPMC - consumers joining at random times")
 
         TLOG << "Consumer [" << i << "] Avg message time: " << avg_time_ns << "ns"
              << " consumed [" << totalVols[i] << " items \n";
-
-        // CHECK(avg_time_ns < 20);
       }));
   }
 

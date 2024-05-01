@@ -40,6 +40,8 @@ TEST_CASE("Unordered SPMC attach detach test")
   std::vector<std::thread> consumers;
   std::atomic_int consumer_joined_num{0};
 
+  TLOG << "\n  " << Catch::getResultCapture().getCurrentTestName() << "\n";
+
   for (size_t i = 0; i < _MAX_CONSUMERS_; ++i)
   {
     consumers.push_back(std::thread(

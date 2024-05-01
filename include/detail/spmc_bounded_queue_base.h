@@ -20,6 +20,7 @@
 #include "spin_lock.h"
 #include <atomic>
 #include <memory>
+#include <string>
 
 template <class T, class Derived, ProducerKind producerKind = ProducerKind::Unordered,
           size_t _MAX_CONSUMER_N_ = 8, size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>>
@@ -97,7 +98,15 @@ public:
 
     if (max_outstanding_non_consumed_items_ + items_per_batch_ != n_)
     {
-      throw std::runtime_error("max_outstanding_non_consumed_items_ is equal n_");
+
+      throw std::runtime_error(std::string("max_outstanding_non_consumed_items_[")
+                                 .append(std::to_string(max_outstanding_non_consumed_items_))
+                                 .append("] ")
+                                 .append("is NOT equal n_[")
+                                 .append(std::to_string(n_))
+                                 .append("] items_per_batch [")
+                                 .append(std::to_string(items_per_batch_))
+                                 .append("]"));
     }
 
     if ((items_per_batch_ & (items_per_batch_ - 1)) != 0)
@@ -125,12 +134,12 @@ public:
         size_t version = node.version_.load(std::memory_order_acquire);
         if (version > 0)
         {
-          std::destroy_at(static_cast<T*>(storage));
+          NodeAllocTraits::destroy(alloc_, static_cast<T*>(storage));
         }
       }
     }
 
-    std::allocator_traits<NodeAllocator>::deallocate(alloc_, nodes_, n_);
+    NodeAllocTraits::deallocate(alloc_, nodes_, n_);
   }
 
   void stop() { this->state_.store(QueueState::Stopped, std::memory_order_release); }
