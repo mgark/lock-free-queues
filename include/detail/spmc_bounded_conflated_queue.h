@@ -102,11 +102,15 @@ public:
     return false;
   }
 
-  template <class Producer, class... Args>
+  template <class Producer, class... Args, bool blocking = Producer::blocking_v>
   ProducerReturnCode emplace(Producer& producer, Args&&... args)
   {
     if (!is_running())
     {
+      if constexpr (blocking)
+      {
+        this->producer_ctx_.rollback_idx();
+      }
       return ProducerReturnCode::NotRunning;
     }
 

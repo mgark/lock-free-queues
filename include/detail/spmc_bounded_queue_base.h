@@ -47,14 +47,14 @@ protected:
   {
     alignas(128) size_t producer_idx_{0};
     size_t aquire_idx() { return producer_idx_++; }
-    void release_idx() { --producer_idx_; }
+    void rollback_idx() { --producer_idx_; }
   };
 
   struct ProducerContextSequencial
   {
     alignas(128) std::atomic<size_t> producer_idx_{0};
     size_t aquire_idx() { return producer_idx_.fetch_add(1, std::memory_order_acquire); }
-    void release_idx() { producer_idx_.fetch_sub(1, std::memory_order_acquire); }
+    void rollback_idx() { producer_idx_.fetch_sub(1, std::memory_order_acquire); }
   };
 
   using NodeAllocator = typename std::allocator_traits<Allocator>::template rebind_alloc<Node>;
@@ -338,6 +338,7 @@ public:
   size_t size() const { return this->n_; }
 
   size_t aquire_idx() { return this->producer_ctx_.aquire_idx(); }
+  size_t rollback_idx() { return this->producer_ctx_.rollback_idx(); }
 
   template <class C>
   bool empty(size_t idx, C& consumer)

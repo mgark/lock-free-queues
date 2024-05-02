@@ -144,7 +144,7 @@ public:
     {
       if constexpr (blocking)
       {
-        this->producer_ctx_.release_idx();
+        this->producer_ctx_.rollback_idx();
       }
       return ProducerReturnCode::NotRunning;
     }
@@ -176,7 +176,7 @@ public:
       {
         if (!is_running())
         {
-          this->producer_ctx_.release_idx();
+          this->producer_ctx_.rollback_idx();
           return ProducerReturnCode::NotRunning;
         }
       }
@@ -216,7 +216,7 @@ public:
     {
       if constexpr (blocking)
       {
-        this->producer_ctx_.release_idx();
+        this->producer_ctx_.rollback_idx();
       }
       return ProducerReturnCode::NotRunning;
     }
@@ -243,7 +243,7 @@ public:
       {
         if (!is_running())
         {
-          this->producer_ctx_.release_idx();
+          this->producer_ctx_.rollback_idx();
           return ProducerReturnCode::NotRunning;
         }
       }
