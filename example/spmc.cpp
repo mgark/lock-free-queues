@@ -41,6 +41,7 @@ int main()
   ConsumerBlocking<Queue> c1(q);
   ConsumerBlocking<Queue> c2(q);
   ProducerBlocking<Queue> p(q);
+  q.start();
 
   p.emplace(1u, 1u, 100.0, 'A');
   c1.consume([&q](const Order& o) mutable { std::cout << o; });

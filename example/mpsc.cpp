@@ -42,6 +42,8 @@ int main()
   ConsumerBlocking<Queue> c1[2] = {q1, q2};
   ProducerBlocking<Queue> p1(q1);
   ProducerBlocking<Queue> p2(q2);
+  q1.start();
+  q2.start();
   {
     p1.emplace(1u, 1u, 100.0, 'A');
     p2.emplace(2u, 2u, 100.0, 'A');

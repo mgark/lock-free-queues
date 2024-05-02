@@ -260,6 +260,7 @@ TEST_CASE("SPMC sequential queue stress test to detect race conditions")
         ;
 
       ProducerBlocking<Queue> p(q);
+      q.start();
       from = std::chrono::system_clock::now().time_since_epoch().count();
       size_t n = 1;
       while (n <= N)

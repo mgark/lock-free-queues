@@ -47,12 +47,14 @@ protected:
   {
     alignas(128) size_t producer_idx_{0};
     size_t aquire_idx() { return producer_idx_++; }
+    void release_idx() { --producer_idx_; }
   };
 
   struct ProducerContextSequencial
   {
     alignas(128) std::atomic<size_t> producer_idx_{0};
     size_t aquire_idx() { return producer_idx_.fetch_add(1, std::memory_order_acquire); }
+    void release_idx() { producer_idx_.fetch_sub(1, std::memory_order_acquire); }
   };
 
   using NodeAllocator = typename std::allocator_traits<Allocator>::template rebind_alloc<Node>;
@@ -87,7 +89,6 @@ public:
       items_per_batch_(n_ / _BATCH_NUM_),
       idx_mask_(n_ - 1),
       consumers_pending_attach_(0),
-      // consumers_pending_dettach_(0),
       max_outstanding_non_consumed_items_((_BATCH_NUM_ - 1) * items_per_batch_),
       alloc_(alloc)
   {

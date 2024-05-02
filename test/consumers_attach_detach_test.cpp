@@ -72,14 +72,14 @@ TEST_CASE("Unordered SPMC attach detach test")
         }
       }));
   }
-
+  while (consumer_joined_num.load() < _MAX_CONSUMERS_)
+    ;
   std::thread producer(
     [&q, &consumer_joined_num, N]()
     {
-      while (consumer_joined_num.load() < _MAX_CONSUMERS_)
-        ;
-
       ProducerBlocking<Queue> p(q);
+      q.start();
+
       auto begin = std::chrono::system_clock::now();
       size_t n = 1;
       while (n <= N)

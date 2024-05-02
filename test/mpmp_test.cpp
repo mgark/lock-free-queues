@@ -30,6 +30,9 @@ TEST_CASE("SPMC functional test")
   ConsumerBlocking<Queue> c2[2] = {q1, q2};
   ProducerBlocking<Queue> p1(q1);
   ProducerBlocking<Queue> p2(q2);
+
+  q1.start();
+  q2.start();
   {
     auto r = p1.emplace(1u, 1u, 100.0, 'A');
     CHECK(ProducerReturnCode::Published == r);

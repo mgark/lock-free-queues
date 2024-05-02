@@ -18,8 +18,9 @@
 #include <assert.h>
 #include <catch2/catch_all.hpp>
 #include <mpmc.h>
+#include <thread>
 
-TEST_CASE("SPSC functional test")
+TEST_CASE("SPSC basic functional test")
 {
   using Queue = SPMCBoundedQueue<Order, ProducerKind::Unordered, 1>;
   Queue q(8);
@@ -27,6 +28,7 @@ TEST_CASE("SPSC functional test")
   constexpr bool blocking = true;
   ConsumerBlocking<Queue> c(q);
   ProducerBlocking<Queue> p(q);
+  q.start();
 
   {
     auto r = p.emplace(1u, 1u, 100.0, 'A');
@@ -36,6 +38,51 @@ TEST_CASE("SPSC functional test")
   {
     auto r = c.consume([&q](const Order& o) mutable { std::cout << o; });
     CHECK(ConsumerReturnCode::Consumed == r);
+  }
+}
+
+TEST_CASE("SPSC stop / start test")
+{
+  // test stop and stating the queue few times
+  using Queue = SPMCBoundedQueue<Order, ProducerKind::Unordered, 1>;
+  Queue q(8);
+
+  constexpr bool blocking = true;
+  ConsumerBlocking<Queue> c(q);
+  ProducerBlocking<Queue> p(q);
+  q.start();
+
+  {
+    auto r = p.emplace(1u, 1u, 100.0, 'A');
+    CHECK(ProducerReturnCode::Published == r);
+  }
+
+  {
+    auto r = c.consume([&q](const Order& o) mutable { std::cout << o; });
+    CHECK(ConsumerReturnCode::Consumed == r);
+  }
+
+  std::jthread t(
+    [&]()
+    {
+      sleep(1); /*wait until consumer calls consume function below*/
+      q.stop();
+    });
+  {
+    auto cr = c.consume([&q](const Order& o) mutable { std::cout << o; });
+    CHECK(ConsumerReturnCode::Stopped == cr);
+
+    auto pr = p.emplace(1u, 1u, 100.0, 'A');
+    CHECK(ProducerReturnCode::NotRunning == pr);
+  }
+
+  q.start();
+  {
+    auto pr = p.emplace(1u, 1u, 100.0, 'A');
+    CHECK(ProducerReturnCode::Published == pr);
+
+    auto cr = c.consume([&q](const Order& o) mutable { std::cout << o; });
+    CHECK(ConsumerReturnCode::Consumed == cr);
   }
 }
 

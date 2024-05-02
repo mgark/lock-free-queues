@@ -81,6 +81,8 @@ TEST_CASE("SPSC throughput test")
     [&q, &consumer_joined_num, N]()
     {
       ProducerBlocking<Queue> p(q);
+      q.start();
+
       auto begin = std::chrono::system_clock::now();
       size_t n = 1;
       while (n <= N)
@@ -157,6 +159,7 @@ TEST_CASE("Conflated SPMC throughput test")
     [&q, &from, &consumer_joined_num, N]()
     {
       ProducerBlocking<Queue> p(q);
+      q.start();
       from = std::chrono::system_clock::now().time_since_epoch().count();
       size_t n = 1;
       while (n <= N)
@@ -247,6 +250,7 @@ TEST_CASE("Sequential MPMC throughput test")
         try
         {
           ProducerBlocking<Queue> p(queue);
+          queue.start();
           auto begin = std::chrono::system_clock::now();
           size_t n = 1;
           while (n <= _MSG_PER_CONSUMER_)
@@ -354,6 +358,7 @@ TEST_CASE("Unordered MPMC throughput test")
         try
         {
           ProducerBlocking<Queue> p(q);
+          q.start();
           auto begin = std::chrono::system_clock::now();
           size_t n = 1;
           while (n <= _MSG_PER_CONSUMER_)
@@ -441,6 +446,7 @@ TEST_CASE("Unordered SPMC throughput test")
       {
 
         ProducerBlocking<Queue> p(q);
+        q.start();
         auto begin = std::chrono::system_clock::now();
         size_t n = 1;
         while (n <= N)
@@ -491,6 +497,7 @@ TEST_CASE("Conflated MPMC - consumers joining at random times")
         try
         {
           ProducerNonBlocking<Queue> p(q.get());
+          q.get().start();
           for (size_t j = 1; j <= _MSG_PER_CONSUMER_; ++j)
           {
             if (ProducerReturnCode::Published == p.emplace(Order{j, 1U, 100.1, 'A'}))

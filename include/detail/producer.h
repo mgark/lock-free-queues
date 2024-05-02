@@ -27,13 +27,7 @@ struct alignas(128) ProducerBlocking
 
   static constexpr bool blocking_v = true;
 
-  ProducerBlocking(Queue& q) : q_(q)
-  {
-    // the idea is that when a producer gets associated with a queue, we do make sure to start the
-    // queue so that users won't need to call start funciton on the queue seprately
-    q_.start();
-  }
-
+  ProducerBlocking(Queue& q) : q_(q) {}
   ProducerBlocking(ProducerBlocking&& other) : q_(other.q_), producer_idx_(other.producer_idx_) {}
 
   template <class... Args>
@@ -53,13 +47,7 @@ struct alignas(128) ProducerNonBlocking
 
   static constexpr bool blocking_v = false;
 
-  ProducerNonBlocking(Queue& q) : q_(q)
-  {
-    // the idea is that when a producer gets associated with a queue, we do make sure to start the
-    // queue so that users won't need to call start funciton on the queue seprately
-    q_.start();
-  }
-
+  ProducerNonBlocking(Queue& q) : q_(q) {}
   ProducerNonBlocking(ProducerNonBlocking&& other)
     : q_(other.q_), producer_idx_(other.producer_idx_)
   {
@@ -75,7 +63,9 @@ struct alignas(128) ProducerNonBlocking
 
     ProducerReturnCode r = q_.emplace(*this, std::forward<Args>(args)...);
     if (r == ProducerReturnCode::Published)
+    {
       producer_idx_ = 0; // need to refresh the index next time emplace is called!
+    }
 
     return r;
   }
