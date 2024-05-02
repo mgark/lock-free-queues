@@ -39,8 +39,8 @@ public:
 protected:
   struct Node
   {
-    alignas(T) std::byte storage_[sizeof(T)];
     std::atomic<size_t> version_{0};
+    alignas(T) std::byte storage_[sizeof(T)];
   };
 
   struct ProducerContextUnordered

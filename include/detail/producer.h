@@ -74,8 +74,8 @@ struct alignas(128) ProducerNonBlocking
     } // otherwise the old index has to be re-used
 
     ProducerReturnCode r = q_.emplace(*this, std::forward<Args>(args)...);
-    if (r != ProducerReturnCode::Published)
-      producer_idx_ = 0; // rest!
+    if (r == ProducerReturnCode::Published)
+      producer_idx_ = 0; // need to refresh the index next time emplace is called!
 
     return r;
   }

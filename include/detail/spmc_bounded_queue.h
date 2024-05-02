@@ -156,7 +156,7 @@ public:
     bool no_free_slot = first_time_publish /*producer publishes first time*/ ||
       (original_idx > min_next_consumer_idx && original_idx - min_next_consumer_idx >= this->n_) ||
       expected_version != version;
-    while ((no_free_slot && blocking) || this->consumers_pending_attach_.load(std::memory_order_acquire))
+    while (no_free_slot || this->consumers_pending_attach_.load(std::memory_order_acquire))
     {
       min_next_consumer_idx = CONSUMER_IS_WELCOME;
       for (size_t i = 1; i < _MAX_CONSUMER_N_ + 1; ++i)
@@ -168,22 +168,25 @@ public:
         }
       }
 
-      if (!is_running())
+      if constexpr (blocking)
       {
-        return ProducerReturnCode::NotRunning;
+        if (!is_running())
+        {
+          return ProducerReturnCode::NotRunning;
+        }
       }
 
       version = node.version_.load(std::memory_order_acquire);
       no_free_slot = (min_next_consumer_idx != CONSUMER_IS_WELCOME && original_idx > min_next_consumer_idx &&
                       original_idx - min_next_consumer_idx >= this->n_) ||
         expected_version != version;
-    }
 
-    if constexpr (!blocking)
-    {
-      if (no_free_slot)
+      if constexpr (!blocking)
       {
-        return ProducerReturnCode::TryAgain;
+        if (no_free_slot)
+        {
+          return ProducerReturnCode::TryAgain;
+        }
       }
     }
 
@@ -192,7 +195,7 @@ public:
     {
       if (version > 0)
       {
-        static_cast<T*>(storage)->~T();
+        NodeAllocTraits::destroy(this->alloc_, static_cast<T*>(storage));
       }
     }
 
@@ -213,7 +216,7 @@ public:
     size_t& min_next_consumer_idx = producer.min_next_consumer_idx_;
     bool first_time_publish = min_next_consumer_idx == CONSUMER_IS_WELCOME;
     bool no_free_slot = first_time_publish || (original_idx - min_next_consumer_idx >= this->n_);
-    while ((no_free_slot && blocking) || this->consumers_pending_attach_.load(std::memory_order_acquire))
+    while (no_free_slot || this->consumers_pending_attach_.load(std::memory_order_acquire))
     {
       min_next_consumer_idx = CONSUMER_IS_WELCOME;
       for (size_t i = 1; i < _MAX_CONSUMER_N_ + 1; ++i)
@@ -227,20 +230,23 @@ public:
 
       // while we inside a tight loop the queue might
       // have had stopped so we need to terminate the loop
-      if (!is_running())
+      if constexpr (blocking)
       {
-        return ProducerReturnCode::NotRunning;
+        if (!is_running())
+        {
+          return ProducerReturnCode::NotRunning;
+        }
       }
 
       no_free_slot = (min_next_consumer_idx != CONSUMER_IS_WELCOME &&
                       original_idx - min_next_consumer_idx >= this->n_);
-    }
 
-    if constexpr (!blocking)
-    {
-      if (no_free_slot)
+      if constexpr (!blocking)
       {
-        return ProducerReturnCode::TryAgain;
+        if (no_free_slot)
+        {
+          return ProducerReturnCode::TryAgain;
+        }
       }
     }
 
@@ -253,7 +259,7 @@ public:
     {
       if (version > 0)
       {
-        static_cast<T*>(storage)->~T();
+        NodeAllocTraits::destroy(this->alloc_, static_cast<T*>(storage));
       }
     }
 

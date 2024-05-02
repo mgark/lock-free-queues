@@ -24,7 +24,9 @@ class Spinlock
 
 public:
   using scoped_lock = std::lock_guard<Spinlock>;
+  friend std::lock_guard<Spinlock>;
 
+private:
   void lock() noexcept
   {
     while (1)
