@@ -76,12 +76,14 @@ protected:
 
   using ConsumerProgressType = std::array<std::atomic<size_t>, _MAX_CONSUMER_N_ + 1>;
   using ConsumerRegistryType = std::array<std::atomic<bool>, _MAX_CONSUMER_N_ + 1>;
+
   alignas(128) ConsumerProgressType consumers_progress_;
   alignas(128) ConsumerRegistryType consumers_registry_;
 
   size_t max_outstanding_non_consumed_items_;
+  std::atomic<size_t> max_consumer_id_;
   NodeAllocator alloc_;
-  Spinlock start_guard_;
+  Spinlock slow_path_guard_;
 
 public:
   SPMCBoundedQueueBase(std::size_t N, const Allocator& alloc = Allocator())
@@ -90,6 +92,7 @@ public:
       idx_mask_(n_ - 1),
       consumers_pending_attach_(0),
       max_outstanding_non_consumed_items_((_BATCH_NUM_ - 1) * items_per_batch_),
+      max_consumer_id_(0),
       alloc_(alloc)
   {
     if ((N & (N - 1)) != 0)
@@ -159,7 +162,7 @@ public:
     // we need an exclusive lock here as the consumers which join would
     // need to set their own consumer reader idx to 0 if the queue has not started yet - they can
     // only do that before start method is called
-    Spinlock::scoped_lock autolock(start_guard_);
+    Spinlock::scoped_lock autolock(slow_path_guard_);
     this->state_.store(QueueState::Running, std::memory_order_release);
   }
 

@@ -16,8 +16,10 @@
 
 #pragma once
 
+#include "detail/common.h"
 #include "detail/spin_lock.h"
 #include "spmc_bounded_queue_base.h"
+#include <atomic>
 
 template <class T, ProducerKind producerKind = ProducerKind::Unordered, size_t _MAX_CONSUMER_N_ = 8,
           size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>>
@@ -53,7 +55,7 @@ public:
           bool producer_need_to_accept = true;
           if (!is_running())
           {
-            Spinlock::scoped_lock autolock(this->start_guard_);
+            Spinlock::scoped_lock autolock(this->slow_path_guard_);
             if (!is_running())
             {
               // if the queue has not started, then let's assign the next read idx by ourselves!
@@ -68,6 +70,12 @@ public:
             this->consumers_pending_attach_.fetch_add(1, std::memory_order_release);
           }
 
+          {
+            Spinlock::scoped_lock autolock(this->slow_path_guard_);
+            auto latest_max_consumer_id = this->max_consumer_id_.load(std::memory_order_relaxed);
+            this->max_consumer_id_.store(std::max(i, latest_max_consumer_id), std::memory_order_release);
+          }
+
           // let's wait for producer to consumer our positions from which we
           // shall start safely consuming
           size_t stopped;
@@ -80,6 +88,7 @@ public:
 
           if (stopped)
           {
+            detach_consumer(i);
             throw std::runtime_error("queue has been stoppped");
           }
 
@@ -88,6 +97,7 @@ public:
       }
     }
 
+    // not enough space for the new consumer!
     return {0, CONSUMER_IS_WELCOME, this->items_per_batch_};
   }
 
@@ -106,6 +116,21 @@ public:
         //  removed it from the registery, effectively leaking it...
         //  so unlocked the same consumer on multiple threads is really a bad
         //  idea
+
+        Spinlock::scoped_lock autolock(this->slow_path_guard_);
+        // It shall be safe to update max consumer idx as the attach function would restore max consumer idx shall one appear right after.
+        auto new_max_consumer_id = _MAX_CONSUMER_N_;
+        while (new_max_consumer_id > 0)
+        {
+          if (this->consumers_progress_.at(new_max_consumer_id).load(std::memory_order_relaxed) == CONSUMER_IS_WELCOME)
+            --new_max_consumer_id;
+          else
+          {
+            break;
+          }
+        }
+
+        this->max_consumer_id_.store(new_max_consumer_id, std::memory_order_release);
         return true;
       }
       else
@@ -163,7 +188,8 @@ public:
     while (no_free_slot || this->consumers_pending_attach_.load(std::memory_order_acquire))
     {
       min_next_consumer_idx = CONSUMER_IS_WELCOME;
-      for (size_t i = 1; i < _MAX_CONSUMER_N_ + 1; ++i)
+      auto max_consumer_id = this->max_consumer_id_.load(std::memory_order_acquire);
+      for (size_t i = 1; i <= max_consumer_id; ++i)
       {
         size_t consumer_next_idx = try_accept_new_consumer(i, original_idx);
         if (consumer_next_idx < CONSUMER_JOIN_INPROGRESS)
@@ -228,7 +254,8 @@ public:
     while (no_free_slot || this->consumers_pending_attach_.load(std::memory_order_acquire))
     {
       min_next_consumer_idx = CONSUMER_IS_WELCOME;
-      for (size_t i = 1; i < _MAX_CONSUMER_N_ + 1; ++i)
+      auto max_consumer_id = this->max_consumer_id_.load(std::memory_order_acquire);
+      for (size_t i = 1; i <= max_consumer_id; ++i)
       {
         size_t consumer_next_idx = try_accept_new_consumer(i, original_idx);
         if (consumer_next_idx < CONSUMER_JOIN_INPROGRESS)
