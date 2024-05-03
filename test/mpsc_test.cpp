@@ -26,10 +26,12 @@ TEST_CASE("MPSC functional test")
   Queue q2(8);
 
   ConsumerBlocking<Queue> c1[2] = {q1, q2};
-  ProducerBlocking<Queue> p1(q1);
-  ProducerBlocking<Queue> p2(q2);
+  ProducerBlocking<Queue> p1;
+  ProducerBlocking<Queue> p2;
   q1.start();
   q2.start();
+  p1.attach(q1);
+  p2.attach(q2);
   {
     auto r = p1.emplace(1u, 1u, 100.0, 'A');
     CHECK(ProducerReturnCode::Published == r);

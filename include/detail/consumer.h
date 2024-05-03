@@ -19,6 +19,7 @@
 #include "common.h"
 #include <atomic>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 
 template <class Queue>
@@ -52,7 +53,7 @@ public:
   }
   ~ConsumerBase() { detach(); }
 
-  ConsumerAttachReturnCode attach(Queue& q) { return do_attach(&q); }
+  ConsumerAttachReturnCode attach(Queue& q) { return do_attach(std::to_address(&q)); }
   bool detach()
   {
     if (q_)

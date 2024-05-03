@@ -8,7 +8,7 @@ Also sequential publishing is supported for multi-producer scenarios with a comp
 
 ## Reliable queues
 
-The idea behind the implementation is pretty simple - just have a fixed number of slots in a ring buffer with fixed size, and don't let consumers touch the memory from the ring buffer. Instead let consumers only update their corresponding read index at intervals (default is each 25% of the ring buffer size). The producer would make sure not to override the index with min consumer read idx.
+The idea behind the implementation is pretty simple - just have a fixed number of slots in a ring buffer with fixed size, and don't let consumers touch the memory from the ring buffer. Instead let consumers only update their corresponding read index at intervals (default is each 25% of the ring buffer size). The producer would make sure not to override data by comparing the index it writes to  the min consumer committed read idx.
 
 ## Conflated queues [x86 only]
 

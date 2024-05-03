@@ -17,54 +17,79 @@
 #pragma once
 
 #include "common.h"
+#include <memory>
 
 template <class Queue>
-struct alignas(128) ProducerBlocking
+class ProducerBase
 {
-  Queue& q_;
+protected:
+  Queue* q_{nullptr};
   size_t producer_idx_{0};
   size_t min_next_consumer_idx_{CONSUMER_IS_WELCOME};
+  friend Queue;
 
-  static constexpr bool blocking_v = true;
-
-  ProducerBlocking(Queue& q) : q_(q) {}
-  ProducerBlocking(ProducerBlocking&& other) : q_(other.q_), producer_idx_(other.producer_idx_) {}
-
-  template <class... Args>
-  ProducerReturnCode emplace(Args&&... args)
+public:
+  ProducerBase() = default;
+  ProducerBase(Queue& q) { attach(q); }
+  ~ProducerBase() { detach(); }
+  void attach(Queue& q)
   {
-    producer_idx_ = q_.aquire_idx();
-    return q_.emplace(*this, std::forward<Args>(args)...);
+    if (q_)
+    {
+      detach();
+    }
+    q_ = std::to_address(&q);
+  }
+  bool detach()
+  {
+    if (q_)
+    {
+      q_ = nullptr;
+      producer_idx_ = 0;
+      min_next_consumer_idx_ = CONSUMER_IS_WELCOME;
+      return true;
+    }
+    else
+    {
+      return false;
+    }
   }
 };
 
 template <class Queue>
-struct alignas(128) ProducerNonBlocking
+class alignas(128) ProducerBlocking : public ProducerBase<Queue>
 {
-  Queue& q_;
-  size_t producer_idx_{0};
-  size_t min_next_consumer_idx_{CONSUMER_IS_WELCOME};
-
-  static constexpr bool blocking_v = false;
-
-  ProducerNonBlocking(Queue& q) : q_(q) {}
-  ProducerNonBlocking(ProducerNonBlocking&& other)
-    : q_(other.q_), producer_idx_(other.producer_idx_)
-  {
-  }
+public:
+  static constexpr bool blocking_v = true;
+  using ProducerBase<Queue>::ProducerBase;
 
   template <class... Args>
   ProducerReturnCode emplace(Args&&... args)
   {
-    if (0 == producer_idx_)
+    this->producer_idx_ = this->q_->aquire_idx();
+    return this->q_->emplace(*this, std::forward<Args>(args)...);
+  }
+};
+
+template <class Queue>
+class alignas(128) ProducerNonBlocking : public ProducerBase<Queue>
+{
+public:
+  static constexpr bool blocking_v = false;
+  using ProducerBase<Queue>::ProducerBase;
+
+  template <class... Args>
+  ProducerReturnCode emplace(Args&&... args)
+  {
+    if (0 == this->producer_idx_)
     {
-      producer_idx_ = q_.aquire_idx();
+      this->producer_idx_ = this->q_->aquire_idx();
     } // otherwise the old index has to be re-used
 
-    ProducerReturnCode r = q_.emplace(*this, std::forward<Args>(args)...);
+    ProducerReturnCode r = this->q_->emplace(*this, std::forward<Args>(args)...);
     if (r == ProducerReturnCode::Published)
     {
-      producer_idx_ = 0; // need to refresh the index next time emplace is called!
+      this->producer_idx_ = 0; // need to refresh the index next time emplace is called!
     }
 
     return r;
