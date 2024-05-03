@@ -18,17 +18,18 @@
 
 #include "detail/common.h"
 #include "detail/spin_lock.h"
-#include "spmc_bounded_queue_base.h"
+#include "spmc_multicast_queue_base.h"
 #include <atomic>
 
 template <class T, ProducerKind producerKind = ProducerKind::Unordered, size_t _MAX_CONSUMER_N_ = 8,
           size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>>
-class SPMCBoundedQueue
-  : public SPMCBoundedQueueBase<T, SPMCBoundedQueue<T, producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>,
-                                producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>
+class SPMCMulticastQueueReliable
+  : public SPMCMulticastQueueBase<T, SPMCMulticastQueueReliable<T, producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>,
+                                  producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>
 {
 public:
-  using Base = SPMCBoundedQueueBase<T, SPMCBoundedQueue, producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>;
+  using Base =
+    SPMCMulticastQueueBase<T, SPMCMulticastQueueReliable, producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>;
   using NodeAllocTraits = typename Base::NodeAllocTraits;
   using Node = typename Base::Node;
   using ConsumerTicket = typename Base::ConsumerTicket;
@@ -163,7 +164,7 @@ public:
   }
 
   template <class Producer, class... Args, bool blocking = Producer::blocking_v>
-  ProducerReturnCode emplace(Producer& producer, Args&&... args) requires(producerKind == ProducerKind::Sequential)
+  ProduceReturnCode emplace(Producer& producer, Args&&... args) requires(producerKind == ProducerKind::Sequential)
   {
     if (!is_running())
     {
@@ -171,7 +172,7 @@ public:
       {
         this->producer_ctx_.rollback_idx();
       }
-      return ProducerReturnCode::NotRunning;
+      return ProduceReturnCode::NotRunning;
     }
 
     size_t& min_next_consumer_idx = producer.min_next_consumer_idx_;
@@ -203,7 +204,7 @@ public:
         if (!is_running())
         {
           this->producer_ctx_.rollback_idx();
-          return ProducerReturnCode::NotRunning;
+          return ProduceReturnCode::NotRunning;
         }
       }
 
@@ -216,7 +217,7 @@ public:
       {
         if (no_free_slot)
         {
-          return ProducerReturnCode::TryAgain;
+          return ProduceReturnCode::TryAgain;
         }
       }
     }
@@ -232,11 +233,11 @@ public:
 
     NodeAllocTraits::construct(this->alloc_, static_cast<T*>(storage), std::forward<Args>(args)...);
     node.version_.store(version + 1, std::memory_order_release);
-    return ProducerReturnCode::Published;
+    return ProduceReturnCode::Published;
   }
 
   template <class Producer, class... Args, bool blocking = Producer::blocking_v>
-  ProducerReturnCode emplace(Producer& producer, Args&&... args) requires(producerKind == ProducerKind::Unordered)
+  ProduceReturnCode emplace(Producer& producer, Args&&... args) requires(producerKind == ProducerKind::Unordered)
   {
     if (!is_running())
     {
@@ -244,7 +245,7 @@ public:
       {
         this->producer_ctx_.rollback_idx();
       }
-      return ProducerReturnCode::NotRunning;
+      return ProduceReturnCode::NotRunning;
     }
 
     size_t original_idx = producer.producer_idx_;
@@ -271,7 +272,7 @@ public:
         if (!is_running())
         {
           this->producer_ctx_.rollback_idx();
-          return ProducerReturnCode::NotRunning;
+          return ProduceReturnCode::NotRunning;
         }
       }
 
@@ -282,7 +283,7 @@ public:
       {
         if (no_free_slot)
         {
-          return ProducerReturnCode::TryAgain;
+          return ProduceReturnCode::TryAgain;
         }
       }
     }
@@ -302,15 +303,15 @@ public:
 
     NodeAllocTraits::construct(this->alloc_, static_cast<T*>(storage), std::forward<Args>(args)...);
     node.version_.store(version + 1, std::memory_order_release);
-    return ProducerReturnCode::Published;
+    return ProduceReturnCode::Published;
   }
 
   template <class C, class F>
-  ConsumerReturnCode consume_by_func(size_t idx, Node& node, size_t version, C& consumer, F&& f)
+  ConsumeReturnCode consume_by_func(size_t idx, Node& node, size_t version, C& consumer, F&& f)
   {
     if (consumer.is_slow_consumer())
     {
-      return ConsumerReturnCode::SlowConsumer;
+      return ConsumeReturnCode::SlowConsumer;
     }
 
     if (consumer.previous_version_ < version)
@@ -329,20 +330,20 @@ public:
         consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
       }
 
-      return ConsumerReturnCode::Consumed;
+      return ConsumeReturnCode::Consumed;
     }
     else
     {
-      return ConsumerReturnCode::NothingToConsume;
+      return ConsumeReturnCode::NothingToConsume;
     }
   }
 
   template <class C>
-  ConsumerReturnCode skip(size_t idx, Node& node, size_t version, C& consumer)
+  ConsumeReturnCode skip(size_t idx, Node& node, size_t version, C& consumer)
   {
     if (consumer.is_slow_consumer())
     {
-      return ConsumerReturnCode::SlowConsumer;
+      return ConsumeReturnCode::SlowConsumer;
     }
 
     if (consumer.previous_version_ < version)
@@ -358,11 +359,11 @@ public:
         this->consumers_progress_[consumer.consumer_id_].store(consumer.consumer_next_idx_, std::memory_order_relaxed);
         consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
       }
-      return ConsumerReturnCode::Consumed;
+      return ConsumeReturnCode::Consumed;
     }
     else
     {
-      return ConsumerReturnCode::NothingToConsume;
+      return ConsumeReturnCode::NothingToConsume;
     }
   }
 };

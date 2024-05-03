@@ -39,7 +39,7 @@ TEST_CASE("SPMC conflated queue stress test to detect race conditions")
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 1;
   constexpr size_t N = 300000000;
   constexpr size_t BATCH_NUM = 1;
-  using Queue = SPMCBoundedConflatedQueue<Vector, ProducerKind::Unordered, _MAX_CONSUMERS_, BATCH_NUM>;
+  using Queue = SPMCMulticastQueueUnreliable<Vector, ProducerKind::Unordered, _MAX_CONSUMERS_, BATCH_NUM>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
   ProducerBlocking<Queue> p(q);
 
@@ -58,7 +58,7 @@ TEST_CASE("SPMC conflated queue stress test to detect race conditions")
         size_t n = 0;
         ++consumer_joined_num;
         auto begin = std::chrono::system_clock::now();
-        while (ConsumerReturnCode::Stopped !=
+        while (ConsumeReturnCode::Stopped !=
                c.consume(
                  [consumer_id = i, sum, &n, &q, &totalVols](const Vector& r) mutable
                  {
@@ -132,7 +132,7 @@ TEST_CASE("SPMC queue stress test to detect race conditions")
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 32;
   constexpr size_t N = 30000000;
   constexpr size_t BATCH_NUM = 2;
-  using Queue = SPMCBoundedQueue<Vector, ProducerKind::Unordered, _MAX_CONSUMERS_, BATCH_NUM>;
+  using Queue = SPMCMulticastQueueReliable<Vector, ProducerKind::Unordered, _MAX_CONSUMERS_, BATCH_NUM>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
 
   size_t from;
@@ -149,7 +149,7 @@ TEST_CASE("SPMC queue stress test to detect race conditions")
         ++consumer_joined_num;
         size_t n = 0;
         auto begin = std::chrono::system_clock::now();
-        while (ConsumerReturnCode::Stopped !=
+        while (ConsumeReturnCode::Stopped !=
                c.consume(
                  [consumer_id = i, sum, &n](const Vector& r) mutable
                  {
@@ -224,7 +224,7 @@ TEST_CASE("SPMC sequential queue stress test to detect race conditions")
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 16;
   constexpr size_t N = 3000000;
   constexpr size_t BATCH_NUM = 2;
-  using Queue = SPMCBoundedQueue<Vector, ProducerKind::Sequential, _MAX_CONSUMERS_, BATCH_NUM>;
+  using Queue = SPMCMulticastQueueReliable<Vector, ProducerKind::Sequential, _MAX_CONSUMERS_, BATCH_NUM>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
 
   size_t from;
@@ -241,7 +241,7 @@ TEST_CASE("SPMC sequential queue stress test to detect race conditions")
         size_t n = 0;
         ++consumer_joined_num;
         auto begin = std::chrono::system_clock::now();
-        while (ConsumerReturnCode::Stopped !=
+        while (ConsumeReturnCode::Stopped !=
                c.consume(
                  [consumer_id = i, sum, &n](const Vector& r) mutable
                  {

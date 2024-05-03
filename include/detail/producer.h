@@ -66,7 +66,7 @@ public:
   using ProducerBase<Queue>::ProducerBase;
 
   template <class... Args>
-  ProducerReturnCode emplace(Args&&... args)
+  ProduceReturnCode emplace(Args&&... args)
   {
     this->producer_idx_ = this->q_->aquire_idx();
     return this->q_->emplace(*this, std::forward<Args>(args)...);
@@ -81,15 +81,15 @@ public:
   using ProducerBase<Queue>::ProducerBase;
 
   template <class... Args>
-  ProducerReturnCode emplace(Args&&... args)
+  ProduceReturnCode emplace(Args&&... args)
   {
     if (0 == this->producer_idx_)
     {
       this->producer_idx_ = this->q_->aquire_idx();
     } // otherwise the old index has to be re-used
 
-    ProducerReturnCode r = this->q_->emplace(*this, std::forward<Args>(args)...);
-    if (r == ProducerReturnCode::Published)
+    ProduceReturnCode r = this->q_->emplace(*this, std::forward<Args>(args)...);
+    if (r == ProduceReturnCode::Published)
     {
       this->producer_idx_ = 0; // need to refresh the index next time emplace is called!
     }

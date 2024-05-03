@@ -22,7 +22,7 @@
 
 TEST_CASE("SPSC basic functional test")
 {
-  using Queue = SPMCBoundedQueue<Order, ProducerKind::Unordered, 1>;
+  using Queue = SPMCMulticastQueueReliable<Order, ProducerKind::Unordered, 1>;
   Queue q(8);
 
   constexpr bool blocking = true;
@@ -32,19 +32,19 @@ TEST_CASE("SPSC basic functional test")
 
   {
     auto r = p.emplace(1u, 1u, 100.0, 'A');
-    CHECK(ProducerReturnCode::Published == r);
+    CHECK(ProduceReturnCode::Published == r);
   }
 
   {
     auto r = c.consume([&q](const Order& o) mutable { std::cout << o; });
-    CHECK(ConsumerReturnCode::Consumed == r);
+    CHECK(ConsumeReturnCode::Consumed == r);
   }
 }
 
 TEST_CASE("SPSC stop / start test")
 {
   // test stop and stating the queue few times
-  using Queue = SPMCBoundedQueue<Order, ProducerKind::Unordered, 1>;
+  using Queue = SPMCMulticastQueueReliable<Order, ProducerKind::Unordered, 1>;
   Queue q(8);
 
   constexpr bool blocking = true;
@@ -54,12 +54,12 @@ TEST_CASE("SPSC stop / start test")
 
   {
     auto r = p.emplace(1u, 1u, 100.0, 'A');
-    CHECK(ProducerReturnCode::Published == r);
+    CHECK(ProduceReturnCode::Published == r);
   }
 
   {
     auto r = c.consume([&q](const Order& o) mutable { std::cout << o; });
-    CHECK(ConsumerReturnCode::Consumed == r);
+    CHECK(ConsumeReturnCode::Consumed == r);
   }
 
   std::jthread t(
@@ -70,19 +70,19 @@ TEST_CASE("SPSC stop / start test")
     });
   {
     auto cr = c.consume([&q](const Order& o) mutable { std::cout << o; });
-    CHECK(ConsumerReturnCode::Stopped == cr);
+    CHECK(ConsumeReturnCode::Stopped == cr);
 
     auto pr = p.emplace(1u, 1u, 100.0, 'A');
-    CHECK(ProducerReturnCode::NotRunning == pr);
+    CHECK(ProduceReturnCode::NotRunning == pr);
   }
 
   q.start();
   {
     auto pr = p.emplace(1u, 1u, 100.0, 'A');
-    CHECK(ProducerReturnCode::Published == pr);
+    CHECK(ProduceReturnCode::Published == pr);
 
     auto cr = c.consume([&q](const Order& o) mutable { std::cout << o; });
-    CHECK(ConsumerReturnCode::Consumed == cr);
+    CHECK(ConsumeReturnCode::Consumed == cr);
   }
 }
 

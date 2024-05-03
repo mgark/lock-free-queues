@@ -25,7 +25,6 @@
 
 #include "common_test_utils.h"
 #include "detail/common.h"
-#include "detail/spmc_bounded_conflated_queue.h"
 
 TEST_CASE("SPSC throughput test")
 {
@@ -34,7 +33,7 @@ TEST_CASE("SPSC throughput test")
   constexpr size_t _MAX_CONSUMERS_ = 1;
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
   constexpr size_t N = 10000000;
-  using Queue = SPMCBoundedQueue<OrderNonTrivial, ProducerKind::Unordered, _MAX_CONSUMERS_>;
+  using Queue = SPMCMulticastQueueReliable<OrderNonTrivial, ProducerKind::Unordered, _MAX_CONSUMERS_>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
 
   TLOG << "\n  " << Catch::getResultCapture().getCurrentTestName() << "\n";
@@ -87,7 +86,7 @@ TEST_CASE("SPSC throughput test")
       size_t n = 1;
       while (n <= N)
       {
-        if (p.emplace(OrderNonTrivial{n, 1U, 100.1, 'B'}) == ProducerReturnCode::Published)
+        if (p.emplace(OrderNonTrivial{n, 1U, 100.1, 'B'}) == ProduceReturnCode::Published)
           ++n;
       }
     });
@@ -107,7 +106,7 @@ TEST_CASE("Conflated SPMC throughput test")
   constexpr size_t _MAX_CONSUMERS_ = 3;
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
   constexpr size_t N = 10000000;
-  using Queue = SPMCBoundedConflatedQueue<Order, ProducerKind::Unordered, _MAX_CONSUMERS_>;
+  using Queue = SPMCMulticastQueueUnreliable<Order, ProducerKind::Unordered, _MAX_CONSUMERS_>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
 
   std::vector<std::thread> consumers;
@@ -164,7 +163,7 @@ TEST_CASE("Conflated SPMC throughput test")
       size_t n = 1;
       while (n <= N)
       {
-        if (p.emplace(Order{n, 1U, 100.1, 'B'}) == ProducerReturnCode::Published)
+        if (p.emplace(Order{n, 1U, 100.1, 'B'}) == ProduceReturnCode::Published)
           ++n;
       }
     });
@@ -187,7 +186,7 @@ TEST_CASE("Sequential MPMC throughput test")
   constexpr size_t _MSG_PER_CONSUMER_ = 10000000;
   constexpr size_t N = _MAX_PUBLISHERS_ * _MSG_PER_CONSUMER_;
 
-  using Queue = SPMCBoundedQueue<OrderNonTrivial, ProducerKind::Sequential, _MAX_CONSUMERS_>;
+  using Queue = SPMCMulticastQueueReliable<OrderNonTrivial, ProducerKind::Sequential, _MAX_CONSUMERS_>;
   Queue queue(_PUBLISHER_QUEUE_SIZE);
 
   size_t from = std::chrono::system_clock::now().time_since_epoch().count();
@@ -216,7 +215,7 @@ TEST_CASE("Sequential MPMC throughput test")
                 if (totalMsgConsumed >= N) // consumed all messages!
                   is_consumer_done = true;
               });
-            if (r == ConsumerReturnCode::Stopped)
+            if (r == ConsumeReturnCode::Stopped)
               is_consumer_done = true;
           }
 
@@ -255,7 +254,7 @@ TEST_CASE("Sequential MPMC throughput test")
           size_t n = 1;
           while (n <= _MSG_PER_CONSUMER_)
           {
-            if (p.emplace(OrderNonTrivial{n, 1U, 100.1, 'B'}) == ProducerReturnCode::Published)
+            if (p.emplace(OrderNonTrivial{n, 1U, 100.1, 'B'}) == ProduceReturnCode::Published)
               ++n;
           }
 
@@ -290,7 +289,7 @@ TEST_CASE("Unordered MPMC throughput test")
   constexpr size_t _MSG_PER_CONSUMER_ = 10000000;
   constexpr size_t N = _MAX_PUBLISHERS_ * _MSG_PER_CONSUMER_;
 
-  using Queue = SPMCBoundedQueue<OrderNonTrivial, ProducerKind::Unordered, _MAX_CONSUMERS_>;
+  using Queue = SPMCMulticastQueueReliable<OrderNonTrivial, ProducerKind::Unordered, _MAX_CONSUMERS_>;
   std::list<Queue> queues;
   for (size_t i = 0; i < _MAX_PUBLISHERS_; ++i)
     queues.emplace_back(_PUBLISHER_QUEUE_SIZE);
@@ -324,7 +323,7 @@ TEST_CASE("Unordered MPMC throughput test")
                   if (r.id >= _MSG_PER_CONSUMER_) // consumed all messages!
                     is_consumer_done[publisher_id] = true;
                 });
-              if (r == ConsumerReturnCode::Stopped)
+              if (r == ConsumeReturnCode::Stopped)
                 is_consumer_done[publisher_id] = true;
             }
           }
@@ -363,7 +362,7 @@ TEST_CASE("Unordered MPMC throughput test")
           size_t n = 1;
           while (n <= _MSG_PER_CONSUMER_)
           {
-            if (p.emplace(OrderNonTrivial{n, 1U, 100.1, 'B'}) == ProducerReturnCode::Published)
+            if (p.emplace(OrderNonTrivial{n, 1U, 100.1, 'B'}) == ProduceReturnCode::Published)
               ++n;
           }
 
@@ -389,7 +388,7 @@ TEST_CASE("Unordered SPMC throughput test")
   constexpr size_t _MAX_CONSUMERS_ = 3;
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
   constexpr size_t N = 10000000;
-  using Queue = SPMCBoundedQueue<OrderNonTrivial, ProducerKind::Unordered, _MAX_CONSUMERS_>;
+  using Queue = SPMCMulticastQueueReliable<OrderNonTrivial, ProducerKind::Unordered, _MAX_CONSUMERS_>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
 
   size_t from = std::chrono::system_clock::now().time_since_epoch().count();
@@ -451,7 +450,7 @@ TEST_CASE("Unordered SPMC throughput test")
         size_t n = 1;
         while (n <= N)
         {
-          if (p.emplace(OrderNonTrivial{n, 1U, 100.1, 'B'}) == ProducerReturnCode::Published)
+          if (p.emplace(OrderNonTrivial{n, 1U, 100.1, 'B'}) == ProduceReturnCode::Published)
             ++n;
         }
       }
@@ -471,7 +470,7 @@ TEST_CASE("Unordered SPMC throughput test")
 #if defined(__x86_64__)
 TEST_CASE("Conflated MPMC - consumers joining at random times")
 {
-  using Queue = SPMCBoundedConflatedQueue<Order>;
+  using Queue = SPMCMulticastQueueUnreliable<Order>;
   constexpr size_t _MAX_PUBLISHERS_ = 4;
   constexpr size_t _MAX_CONSUMERS_ = 2;
   constexpr size_t _MSG_PER_CONSUMER_ = 100000000;
@@ -500,7 +499,7 @@ TEST_CASE("Conflated MPMC - consumers joining at random times")
           q.get().start();
           for (size_t j = 1; j <= _MSG_PER_CONSUMER_; ++j)
           {
-            if (ProducerReturnCode::Published == p.emplace(Order{j, 1U, 100.1, 'A'}))
+            if (ProduceReturnCode::Published == p.emplace(Order{j, 1U, 100.1, 'A'}))
             {
             }
           }
@@ -547,7 +546,7 @@ TEST_CASE("Conflated MPMC - consumers joining at random times")
                   if (r.id >= _MSG_PER_CONSUMER_) // consumed all messages!
                     is_consumer_done = true;
                 });
-              if (r == ConsumerReturnCode::Stopped)
+              if (r == ConsumeReturnCode::Stopped)
                 is_consumer_done = true;
 
               if (is_consumer_done)

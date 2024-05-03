@@ -17,7 +17,7 @@ foreach( testsourcefile ${SOURCES} )
     add_executable(${TARGET_TEST_NAME})
     target_sources(${TARGET_TEST_NAME} PRIVATE ${SOURCE_TEST_FILES})
     target_compile_options(${TARGET_TEST_NAME} PRIVATE ${COMPILE_FLAGS})
-    target_link_libraries(${TARGET_TEST_NAME} PRIVATE Catch2::Catch2) 
+    target_link_libraries(${TARGET_TEST_NAME} PRIVATE Threads::Threads Catch2::Catch2) 
     catch_discover_tests(${TARGET_TEST_NAME})
 
 endforeach( testsourcefile ${SOURCES} )

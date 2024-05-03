@@ -37,7 +37,7 @@ int main()
 #if defined(__x86_64__)
   constexpr size_t MAX_CONSUMER_NUM = 2;
   constexpr size_t BATCH_NUM = 1;
-  using Queue = SPMCBoundedConflatedQueue<Order, ProducerKind::Unordered, MAX_CONSUMER_NUM, BATCH_NUM>;
+  using Queue = SPMCMulticastQueueUnreliable<Order, ProducerKind::Unordered, MAX_CONSUMER_NUM, BATCH_NUM>;
   Queue q(2); // only hold 2 slots in the ring buffer
 
   constexpr bool blocking = true;

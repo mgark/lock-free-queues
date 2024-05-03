@@ -1,8 +1,7 @@
 
 # Introduction
 
-Fairly generic templated slot based (byte ones will come as well) lock-free implemenation for SPSC, MPMC, MPSC, SCMP. The idea is to provide the same interface for all of those queues and allow multiple compile-time options to tune them for real scenarios.
-Also sequential publishing is supported for multi-producer scenarios with a compile time setting.
+Fairly generic header-only and slot based (byte ones will come as well) lock-free implemenation for **multicast**(**anycast** will come soon as well) SPSC, MPMC, MPSC, SCMP. Note that in case of multi consumers, all of them would get a copy of data.  The idea is to provide the same interface for all of those queues and allow multiple compile-time options to tune them for real scenarios.  Also sequential publishing is supported for multi-producer scenarios with a compile time setting.
 
 # Design
 
@@ -39,6 +38,7 @@ Consumers don't need to track their index even, just check if a given slot got a
 - full clang support
 - easy installation on target platforms
 - write more tests
+- [anycast queues] provide an option for multi consumers to exclusively consume items from the queue, which is more like a traditional queue.
 - implement slow consumer handling by allowing ring queue to grow dynamically - up to a limit. Also with this feature you'd get a pretty much unbounded queue as well and it would be very fast.
 - benchmark against other implementations, including Java's Disruptor
 - support for queues over shared memory

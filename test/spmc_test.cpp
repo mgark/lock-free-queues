@@ -23,7 +23,7 @@
 
 TEST_CASE("SPMC functional test")
 {
-  using Queue = SPMCBoundedQueue<Order, ProducerKind::Unordered, 2>;
+  using Queue = SPMCMulticastQueueReliable<Order, ProducerKind::Unordered, 2>;
   Queue q(8);
 
   constexpr bool blocking = true;
@@ -35,13 +35,13 @@ TEST_CASE("SPMC functional test")
   q.start();
   {
     auto r = p.emplace(1u, 1u, 100.0, 'A');
-    CHECK(ProducerReturnCode::Published == r);
+    CHECK(ProduceReturnCode::Published == r);
   }
   {
     auto r = c1.consume([&q](const Order& o) mutable { std::cout << o; });
-    CHECK(ConsumerReturnCode::Consumed == r);
+    CHECK(ConsumeReturnCode::Consumed == r);
     r = c2.consume([&q](const Order& o) mutable { std::cout << o; });
-    CHECK(ConsumerReturnCode::Consumed == r);
+    CHECK(ConsumeReturnCode::Consumed == r);
   }
 }
 

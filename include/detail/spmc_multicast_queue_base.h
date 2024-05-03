@@ -24,7 +24,7 @@
 
 template <class T, class Derived, ProducerKind producerKind = ProducerKind::Unordered,
           size_t _MAX_CONSUMER_N_ = 8, size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>>
-class SPMCBoundedQueueBase
+class SPMCMulticastQueueBase
 {
 public:
   using type = T;
@@ -87,7 +87,7 @@ protected:
   Spinlock slow_path_guard_;
 
 public:
-  SPMCBoundedQueueBase(std::size_t N, const Allocator& alloc = Allocator())
+  SPMCMulticastQueueBase(std::size_t N, const Allocator& alloc = Allocator())
     : n_(N),
       items_per_batch_(n_ / _BATCH_NUM_),
       idx_mask_(n_ - 1),
@@ -126,7 +126,7 @@ public:
     std::uninitialized_default_construct(nodes_, nodes_ + N);
   }
 
-  ~SPMCBoundedQueueBase()
+  ~SPMCMulticastQueueBase()
   {
     stop();
 
@@ -168,11 +168,11 @@ public:
   }
 
   template <class C>
-  requires std::is_trivially_copyable_v<T> ConsumerReturnCode consume_raw_blocking(size_t idx, void* dest, C& consumer)
+  requires std::is_trivially_copyable_v<T> ConsumeReturnCode consume_raw_blocking(size_t idx, void* dest, C& consumer)
   {
     QueueState state;
     size_t version;
-    ConsumerReturnCode r;
+    ConsumeReturnCode r;
     Node& node = this->nodes_[idx];
 
     do
@@ -182,20 +182,20 @@ public:
         idx, node, version, consumer,
         [dest](void* storage)
         { std::memcpy(dest, std::launder(reinterpret_cast<T*>(storage)), sizeof(T)); });
-      if (r == ConsumerReturnCode::Consumed)
+      if (r == ConsumeReturnCode::Consumed)
         return r;
 
       state = this->state_.load(std::memory_order_acquire);
-    } while (state == QueueState::Running && r == ConsumerReturnCode::NothingToConsume);
+    } while (state == QueueState::Running && r == ConsumeReturnCode::NothingToConsume);
 
     if (state == QueueState::Stopped)
-      return ConsumerReturnCode::Stopped;
+      return ConsumeReturnCode::Stopped;
 
     return r;
   }
 
   template <class C>
-  ConsumerReturnCode consume_raw_non_blocking(size_t idx, void* dest, C& consumer)
+  ConsumeReturnCode consume_raw_non_blocking(size_t idx, void* dest, C& consumer)
   {
     Node& node = this->nodes_[idx];
     size_t version = node.version_.load(std::memory_order_acquire);
@@ -204,7 +204,7 @@ public:
       [dest](void* storage)
       { std::memcpy(dest, std::launder(reinterpret_cast<const T*>(storage)), sizeof(T)); });
 
-    if (r == ConsumerReturnCode::Consumed)
+    if (r == ConsumeReturnCode::Consumed)
     {
       return r;
     }
@@ -212,17 +212,17 @@ public:
     {
       QueueState state = this->state_.load(std::memory_order_acquire);
       if (state == QueueState::Stopped)
-        return ConsumerReturnCode::Stopped;
+        return ConsumeReturnCode::Stopped;
 
       return r;
     }
   }
 
   template <class C, class F>
-  ConsumerReturnCode consume_blocking(size_t idx, C& consumer, F&& f)
+  ConsumeReturnCode consume_blocking(size_t idx, C& consumer, F&& f)
   {
     size_t version;
-    ConsumerReturnCode r;
+    ConsumeReturnCode r;
     QueueState state;
     Node& node = this->nodes_[idx];
 
@@ -233,20 +233,20 @@ public:
         idx, node, version, consumer,
         [f = std::forward<F>(f)](void* storage) mutable
         { std::forward<F>(f)(*std::launder(reinterpret_cast<const T*>(storage))); });
-      if (r == ConsumerReturnCode::Consumed)
+      if (r == ConsumeReturnCode::Consumed)
         return r;
 
       state = this->state_.load(std::memory_order_acquire);
-    } while (state == QueueState::Running && r == ConsumerReturnCode::NothingToConsume);
+    } while (state == QueueState::Running && r == ConsumeReturnCode::NothingToConsume);
 
     if (state == QueueState::Stopped)
-      return ConsumerReturnCode::Stopped;
+      return ConsumeReturnCode::Stopped;
 
     return r;
   }
 
   template <class C, class F>
-  ConsumerReturnCode consume_non_blocking(size_t idx, C& consumer, F&& f)
+  ConsumeReturnCode consume_non_blocking(size_t idx, C& consumer, F&& f)
   {
     Node& node = this->nodes_[idx];
     size_t version = node.version_.load(std::memory_order_acquire);
@@ -255,7 +255,7 @@ public:
       [f = std::forward<F>(f)](void* storage) mutable
       { std::forward<F>(f)(*std::launder(reinterpret_cast<const T*>(storage))); });
 
-    if (r == ConsumerReturnCode::Consumed)
+    if (r == ConsumeReturnCode::Consumed)
     {
       return r;
     }
@@ -263,7 +263,7 @@ public:
     {
       QueueState state = this->state_.load(std::memory_order_acquire);
       if (state == QueueState::Stopped)
-        return ConsumerReturnCode::Stopped;
+        return ConsumeReturnCode::Stopped;
 
       return r;
     }
@@ -297,9 +297,9 @@ public:
   }
 
   template <class C>
-  ConsumerReturnCode skip_blocking(size_t idx, C& consumer)
+  ConsumeReturnCode skip_blocking(size_t idx, C& consumer)
   {
-    ConsumerReturnCode r;
+    ConsumeReturnCode r;
     size_t version;
     Node& node = this->nodes_[idx];
     QueueState state;
@@ -308,24 +308,24 @@ public:
     {
       version = node.version_.load(std::memory_order_acquire);
       r = static_cast<Derived&>(*this).skip(idx, node, version, consumer);
-      if (ConsumerReturnCode::Consumed == r)
+      if (ConsumeReturnCode::Consumed == r)
         return r;
 
       state = this->state_.load(std::memory_order_acquire);
-    } while (state == QueueState::Running && r == ConsumerReturnCode::NothingToConsume);
+    } while (state == QueueState::Running && r == ConsumeReturnCode::NothingToConsume);
     if (state == QueueState::Stopped)
-      return ConsumerReturnCode::Stopped;
+      return ConsumeReturnCode::Stopped;
 
     return r;
   }
 
   template <class C>
-  ConsumerReturnCode skip_non_blocking(size_t idx, C& consumer)
+  ConsumeReturnCode skip_non_blocking(size_t idx, C& consumer)
   {
     Node& node = this->nodes_[idx];
     size_t version = node.version_.load(std::memory_order_acquire);
     auto r = static_cast<Derived&>(*this).skip(idx, node, version, consumer);
-    if (r == ConsumerReturnCode::Consumed)
+    if (r == ConsumeReturnCode::Consumed)
     {
       return r;
     }
@@ -333,7 +333,7 @@ public:
     {
       QueueState state = this->state_.load(std::memory_order_acquire);
       if (state == QueueState::Stopped)
-        return ConsumerReturnCode::Stopped;
+        return ConsumeReturnCode::Stopped;
 
       return r;
     }

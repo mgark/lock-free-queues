@@ -125,7 +125,7 @@ public:
 
     const_iterator& operator++()
     {
-      if (c_->skip() != ConsumerReturnCode::Consumed)
+      if (c_->skip() != ConsumeReturnCode::Consumed)
       {
         c_ = nullptr; // reached the end! so effectively it is end iterator now
       }
@@ -217,19 +217,19 @@ struct ConsumerBlocking : ConsumerBase<Queue>
   }
 
   template <class F>
-  ConsumerReturnCode consume(F&& f) requires(std::is_void_v<decltype((std::forward<F>(f)(std::declval<T>()), void()))>)
+  ConsumeReturnCode consume(F&& f) requires(std::is_void_v<decltype((std::forward<F>(f)(std::declval<T>()), void()))>)
   {
     size_t idx = this->consumer_next_idx_ & this->idx_mask_;
     return this->q_->consume_blocking(idx, *this, std::forward<F>(f));
   }
 
-  ConsumerReturnCode skip()
+  ConsumeReturnCode skip()
   {
     size_t idx = this->consumer_next_idx_ & this->idx_mask_;
     return this->q_->skip_blocking(idx, *this);
   }
 
-  ConsumerReturnCode consume(T& dst) requires std::is_default_constructible_v<T>
+  ConsumeReturnCode consume(T& dst) requires std::is_default_constructible_v<T>
   {
     size_t idx = this->consumer_next_idx_ & this->idx_mask_;
     return this->q_->consume_raw_blocking(idx, reinterpret_cast<void*>(&dst), *this);
@@ -240,21 +240,21 @@ struct ConsumerBlocking : ConsumerBase<Queue>
     size_t idx = this->consumer_next_idx_ & this->idx_mask_;
     alignas(T) std::byte raw[sizeof(T)];
     auto ret_code = this->q_->consume_raw_blocking(idx, raw, *this);
-    if (ConsumerReturnCode::Consumed == ret_code)
+    if (ConsumeReturnCode::Consumed == ret_code)
     {
       return *std::launder(reinterpret_cast<T*>(raw));
     }
-    else if (ConsumerReturnCode::Stopped == ret_code)
+    else if (ConsumeReturnCode::Stopped == ret_code)
     {
       throw QueueStoppedExp();
     }
-    else if (ConsumerReturnCode::SlowConsumer == ret_code)
+    else if (ConsumeReturnCode::SlowConsumer == ret_code)
     {
       throw SlowConsumerExp();
     }
   }
 
-  ConsumerReturnCode consume_raw(void* dst) requires std::is_trivially_copyable_v<T>
+  ConsumeReturnCode consume_raw(void* dst) requires std::is_trivially_copyable_v<T>
   {
     size_t idx = this->consumer_next_idx_ & this->idx_mask_;
     return this->q_->consume_raw_blocking(idx, dst, *this);
@@ -285,25 +285,25 @@ struct ConsumerNonBlocking : ConsumerBase<Queue>
   }
 
   template <class F>
-  ConsumerReturnCode consume(F&& f) requires(std::is_void_v<decltype((std::forward<F>(f)(std::declval<T>()), void()))>)
+  ConsumeReturnCode consume(F&& f) requires(std::is_void_v<decltype((std::forward<F>(f)(std::declval<T>()), void()))>)
   {
     size_t idx = this->consumer_next_idx_ & this->idx_mask_;
     return this->q_->consume_non_blocking(idx, *this, std::forward<F>(f));
   }
 
-  ConsumerReturnCode skip()
+  ConsumeReturnCode skip()
   {
     size_t idx = this->consumer_next_idx_ & this->idx_mask_;
     return this->q_->skip_non_blocking(idx, *this);
   }
 
-  ConsumerReturnCode consume(T& dst) requires std::is_default_constructible_v<T>
+  ConsumeReturnCode consume(T& dst) requires std::is_default_constructible_v<T>
   {
     size_t idx = this->consumer_next_idx_ & this->idx_mask_;
     return this->q_->consume_raw_non_blocking(idx, reinterpret_cast<void*>(&dst), *this);
   }
 
-  ConsumerReturnCode consume_raw(void* dst) requires std::is_trivially_copyable_v<T>
+  ConsumeReturnCode consume_raw(void* dst) requires std::is_trivially_copyable_v<T>
   {
     size_t idx = this->consumer_next_idx_ & this->idx_mask_;
     return this->q_->consume_raw_non_blocking(idx, dst, *this);

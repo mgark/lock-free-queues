@@ -21,7 +21,7 @@
 
 TEST_CASE("MPSC functional test")
 {
-  using Queue = SPMCBoundedQueue<Order, ProducerKind::Unordered, 2>;
+  using Queue = SPMCMulticastQueueReliable<Order, ProducerKind::Unordered, 2>;
   Queue q1(8);
   Queue q2(8);
 
@@ -34,15 +34,15 @@ TEST_CASE("MPSC functional test")
   p2.attach(q2);
   {
     auto r = p1.emplace(1u, 1u, 100.0, 'A');
-    CHECK(ProducerReturnCode::Published == r);
+    CHECK(ProduceReturnCode::Published == r);
     r = p2.emplace(2u, 2u, 100.0, 'A');
-    CHECK(ProducerReturnCode::Published == r);
+    CHECK(ProduceReturnCode::Published == r);
   }
   {
     auto r = c1[0].consume([](const Order& o) { std::cout << o; });
-    CHECK(ConsumerReturnCode::Consumed == r);
+    CHECK(ConsumeReturnCode::Consumed == r);
     r = c1[1].consume([](const Order& o) { std::cout << o; });
-    CHECK(ConsumerReturnCode::Consumed == r);
+    CHECK(ConsumeReturnCode::Consumed == r);
   }
 }
 

@@ -21,21 +21,21 @@
 #if defined(__x86_64__)
 
   #include "detail/common.h"
-  #include "spmc_bounded_queue_base.h"
+  #include "spmc_multicast_queue_base.h"
   #include <atomic>
   #include <type_traits>
 
 template <class T, ProducerKind producerKind = ProducerKind::Unordered,
           size_t _MAX_CONSUMER_N_ = 16, size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>>
-class SPMCBoundedConflatedQueue
-  : public SPMCBoundedQueueBase<T, SPMCBoundedConflatedQueue<T, producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>,
-                                producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>
+class SPMCMulticastQueueUnreliable
+  : public SPMCMulticastQueueBase<T, SPMCMulticastQueueUnreliable<T, producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>,
+                                  producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>
 {
   static_assert(std::is_trivially_copyable_v<T>);
 
 public:
   using Base =
-    SPMCBoundedQueueBase<T, SPMCBoundedConflatedQueue, producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>;
+    SPMCMulticastQueueBase<T, SPMCMulticastQueueUnreliable, producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>;
   using NodeAllocTraits = typename Base::NodeAllocTraits;
   using Node = typename Base::Node;
   using ConsumerTicket = typename Base::ConsumerTicket;
@@ -106,7 +106,7 @@ public:
   }
 
   template <class Producer, class... Args, bool blocking = Producer::blocking_v>
-  ProducerReturnCode emplace(Producer& producer, Args&&... args)
+  ProduceReturnCode emplace(Producer& producer, Args&&... args)
   {
     if (!is_running())
     {
@@ -114,7 +114,7 @@ public:
       {
         this->producer_ctx_.rollback_idx();
       }
-      return ProducerReturnCode::NotRunning;
+      return ProduceReturnCode::NotRunning;
     }
 
     // the whole point for the producer is just keep publishing to the new
@@ -134,11 +134,11 @@ public:
       node.version_.store(version + 2, std::memory_order_release);
     }
 
-    return ProducerReturnCode::Published;
+    return ProduceReturnCode::Published;
   }
 
   template <class C, class F>
-  ConsumerReturnCode consume_by_func(size_t idx, Node& node, size_t version, C& consumer, F&& f)
+  ConsumeReturnCode consume_by_func(size_t idx, Node& node, size_t version, C& consumer, F&& f)
   {
     size_t& previous_version = consumer.previous_version_;
     if ((version & 1) == 0 && previous_version < version)
@@ -160,19 +160,19 @@ public:
         { // need to rollover
           previous_version = version;
         }
-        return ConsumerReturnCode::Consumed;
+        return ConsumeReturnCode::Consumed;
       }
       else
       {
-        return ConsumerReturnCode::SlowConsumer;
+        return ConsumeReturnCode::SlowConsumer;
       }
     }
 
-    return ConsumerReturnCode::NothingToConsume;
+    return ConsumeReturnCode::NothingToConsume;
   }
 
   template <class C>
-  ConsumerReturnCode skip(size_t idx, Node& node, size_t version, C& consumer)
+  ConsumeReturnCode skip(size_t idx, Node& node, size_t version, C& consumer)
   {
     size_t& previous_version = consumer.previous_version_;
     if ((version & 1) == 0 && previous_version < version)
@@ -182,11 +182,11 @@ public:
       { // need to rollover
         previous_version = version;
       }
-      return ConsumerReturnCode::Consumed;
+      return ConsumeReturnCode::Consumed;
     }
     else
     {
-      return ConsumerReturnCode::NothingToConsume;
+      return ConsumeReturnCode::NothingToConsume;
     }
   }
 

@@ -42,7 +42,7 @@ enum class ProducerKind
   Sequential
 };
 
-enum class ProducerReturnCode
+enum class ProduceReturnCode
 {
   Published,
   NotRunning,
@@ -57,7 +57,7 @@ enum class ConsumerAttachReturnCode
   Attached
 };
 
-enum class ConsumerReturnCode
+enum class ConsumeReturnCode
 {
   NothingToConsume,
   Consumed,
