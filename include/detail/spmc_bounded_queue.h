@@ -89,16 +89,16 @@ public:
           if (stopped)
           {
             detach_consumer(i);
-            throw std::runtime_error("queue has been stoppped");
+            return {0, CONSUMER_IS_WELCOME, this->items_per_batch_, ConsumerAttachReturnCode::Stopped};
           }
 
-          return {i, consumer_next_idx, this->items_per_batch_};
+          return {i, consumer_next_idx, this->items_per_batch_, ConsumerAttachReturnCode::Attached};
         } // else someone stole the locker just before us!
       }
     }
 
     // not enough space for the new consumer!
-    return {0, CONSUMER_IS_WELCOME, this->items_per_batch_};
+    return {0, CONSUMER_IS_WELCOME, this->items_per_batch_, ConsumerAttachReturnCode::ConsumerLimitReached};
   }
 
   bool detach_consumer(size_t consumer_id)
@@ -325,7 +325,7 @@ public:
       ++consumer.consumer_next_idx_;
       if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
       {
-        this->consumers_progress_[consumer.consumer_id].store(consumer.consumer_next_idx_, std::memory_order_relaxed);
+        this->consumers_progress_[consumer.consumer_id_].store(consumer.consumer_next_idx_, std::memory_order_relaxed);
         consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
       }
 
@@ -355,7 +355,7 @@ public:
       ++consumer.consumer_next_idx_;
       if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
       {
-        this->consumers_progress_[consumer.consumer_id].store(consumer.consumer_next_idx_, std::memory_order_relaxed);
+        this->consumers_progress_[consumer.consumer_id_].store(consumer.consumer_next_idx_, std::memory_order_relaxed);
         consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
       }
       return ConsumerReturnCode::Consumed;

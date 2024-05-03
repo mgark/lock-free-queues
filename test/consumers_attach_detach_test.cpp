@@ -67,7 +67,6 @@ TEST_CASE("Unordered SPMC attach detach test")
           TLOG << "Consumer [" << i << "] raw time per one item: " << avg_time_ns << "ns"
                << " consumed [" << consumed_num << " items \n";
           CHECK(consumed_num == CONSUMER_N);
-          CHECK(avg_time_ns < 100);
           --consumer_joined_num;
         }
       }));

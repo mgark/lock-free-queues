@@ -15,6 +15,7 @@
  */
 
 #include "common_test_utils.h"
+#include "detail/common.h"
 #include "detail/consumer.h"
 #include <assert.h>
 #include <catch2/catch_all.hpp>
@@ -26,9 +27,11 @@ TEST_CASE("SPMC functional test")
   Queue q(8);
 
   constexpr bool blocking = true;
-  ConsumerBlocking<Queue> c1(q);
-  ConsumerBlocking<Queue> c2(q);
+  ConsumerBlocking<Queue> c1;
+  ConsumerBlocking<Queue> c2;
   ProducerBlocking<Queue> p(q);
+  CHECK(ConsumerAttachReturnCode::Attached == c1.attach(q));
+  CHECK(ConsumerAttachReturnCode::Attached == c2.attach(q));
   q.start();
   {
     auto r = p.emplace(1u, 1u, 100.0, 'A');

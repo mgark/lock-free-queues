@@ -162,12 +162,13 @@ TEST_CASE("SPMC queue stress test to detect race conditions")
       }));
   }
 
+  while (consumer_joined_num.load() < _MAX_CONSUMERS_)
+    ;
+  q.start();
+
   std::thread producer(
     [&q, &from, &odd_vector, &even_vector, &consumer_joined_num, N]()
     {
-      while (consumer_joined_num.load() < _MAX_CONSUMERS_)
-        ;
-
       ProducerBlocking<Queue> p(q);
       from = std::chrono::system_clock::now().time_since_epoch().count();
       size_t n = 1;

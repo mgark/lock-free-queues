@@ -17,6 +17,7 @@
 #pragma once
 
 // Confalted queue only supported on x86
+#include <limits>
 #if defined(__x86_64__)
 
   #include "detail/common.h"
@@ -59,15 +60,17 @@ public:
         {
           if (is_stopped())
           {
-            throw std::runtime_error("queue has been stoppped");
+            return {0, CONSUMER_IS_WELCOME, std::numeric_limits<size_t>::max(), ConsumerAttachReturnCode::Stopped};
           }
 
-          return {i, 0 /*does not matter basically*/};
+          return {i, 0 /*does not matter basically*/, std::numeric_limits<size_t>::max(),
+                  ConsumerAttachReturnCode::Attached};
         } // else someone stole the locker just before us!
       }
     }
 
-    return {0, CONSUMER_IS_WELCOME};
+    return {0, CONSUMER_IS_WELCOME, std::numeric_limits<size_t>::max(),
+            ConsumerAttachReturnCode::ConsumerLimitReached};
   }
 
   /*

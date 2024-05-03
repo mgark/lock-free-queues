@@ -18,47 +18,56 @@
 
 #include "common.h"
 #include <atomic>
+#include <limits>
+#include <stdexcept>
 
 template <class Queue>
-struct alignas(128) ConsumerBase
+class alignas(128) ConsumerBase
 {
-  using T = typename Queue::type;
-
-  Queue& q_;
+protected:
+  Queue* q_;
   size_t n_;
   size_t consumer_next_idx_;
   size_t previous_version_;
   size_t idx_mask_;
-  size_t consumer_id;
+  size_t consumer_id_;
   size_t next_checkout_point_idx_;
   size_t items_per_batch_;
   std::atomic_bool slow_consumer_; // TODO: not implemented fully yet
 
-  ConsumerBase(Queue& q) : q_(q), n_(q_.size()), idx_mask_(n_ - 1), slow_consumer_(false)
+  friend Queue;
+
+public:
+  using T = typename Queue::type;
+
+  ConsumerBase() : q_(nullptr), slow_consumer_(false) {}
+  ConsumerBase(Queue& q) : q_(nullptr), slow_consumer_(false)
   {
-    auto ticket = q.attach_consumer(*this);
-    consumer_id = ticket.consumer_id;
-    if (!consumer_id)
+    if (ConsumerAttachReturnCode::Attached != attach(q))
     {
-      throw std::runtime_error("could not attach consumer as all the slots are full");
+      throw std::runtime_error(
+        "could not attach the consumer to the queue - because either there is no space for more "
+        "consumers / queue has been stopped");
     }
-
-    consumer_next_idx_ = ticket.consumer_next_idx_;
-    items_per_batch_ = ticket.items_per_batch;
-    if (0 != ticket.items_per_batch)
-    {
-      // conflated queue does not use it
-      next_checkout_point_idx_ = ticket.items_per_batch +
-        (consumer_next_idx_ - ticket.consumer_next_idx_ % ticket.items_per_batch);
-    }
-    previous_version_ = consumer_next_idx_ / n_;
   }
+  ~ConsumerBase() { detach(); }
 
-  ~ConsumerBase() { q_.detach_consumer(consumer_id); }
+  ConsumerAttachReturnCode attach(Queue& q) { return do_attach(&q); }
+  bool detach()
+  {
+    if (q_)
+    {
+      q_->detach_consumer(consumer_id_);
+      q_ = nullptr;
+      return true;
+    }
+    else
+      return false;
+  }
 
   void set_slow_consumer() noexcept { slow_consumer_.store(true, std::memory_order_release); }
   bool is_slow_consumer() const noexcept { return slow_consumer_.load(std::memory_order_acquire); }
-  bool is_stopped() const noexcept { return this->q_.is_stopped(); }
+  bool is_stopped() const noexcept { return this->q_->is_stopped(); }
 
   template <class Derived>
   struct const_iterator
@@ -152,6 +161,31 @@ struct alignas(128) ConsumerBase
       return !operator==(l, r);
     }
   };
+
+protected:
+  ConsumerAttachReturnCode do_attach(Queue* q)
+  {
+    n_ = q->size();
+    idx_mask_ = n_ - 1;
+
+    auto ticket = q->attach_consumer(*this);
+    if (ticket.ret_code == ConsumerAttachReturnCode::Attached)
+    {
+      q_ = q;
+      consumer_id_ = ticket.consumer_id;
+      consumer_next_idx_ = ticket.consumer_next_idx;
+      items_per_batch_ = ticket.items_per_batch;
+      if (std::numeric_limits<size_t>::max() != ticket.items_per_batch)
+      {
+        // conflated queue does not use it
+        next_checkout_point_idx_ = ticket.items_per_batch +
+          (consumer_next_idx_ - ticket.consumer_next_idx % ticket.items_per_batch);
+      }
+      previous_version_ = consumer_next_idx_ / n_;
+    }
+
+    return ticket.ret_code;
+  }
 };
 
 template <class Queue>
@@ -159,8 +193,8 @@ struct ConsumerBlocking : ConsumerBase<Queue>
 {
   using ConsumerBase<Queue>::ConsumerBase;
   using T = typename Queue::type;
-
   using const_iterator = typename ConsumerBase<Queue>::template const_iterator<ConsumerBlocking<Queue>>;
+  static constexpr bool blocking_v = true;
 
   const_iterator cbegin() requires std::input_iterator<const_iterator>
   {
@@ -168,38 +202,38 @@ struct ConsumerBlocking : ConsumerBase<Queue>
   }
   const_iterator cend() requires std::input_iterator<const_iterator> { return const_iterator(); }
 
-  bool empty() const { return this->q_.empty(this->consumer_next_ids_ & this->idx_mask_, *this); }
+  bool empty() const { return this->q_->empty(this->consumer_next_ids_ & this->idx_mask_, *this); }
 
   const T* peek() const
   {
     size_t idx = this->consumer_next_idx_ & this->idx_mask_;
-    return this->q_.peek_blocking(idx, *this);
+    return this->q_->peek_blocking(idx, *this);
   }
 
   template <class F>
   ConsumerReturnCode consume(F&& f) requires(std::is_void_v<decltype((std::forward<F>(f)(std::declval<T>()), void()))>)
   {
     size_t idx = this->consumer_next_idx_ & this->idx_mask_;
-    return this->q_.consume_blocking(idx, *this, std::forward<F>(f));
+    return this->q_->consume_blocking(idx, *this, std::forward<F>(f));
   }
 
   ConsumerReturnCode skip()
   {
     size_t idx = this->consumer_next_idx_ & this->idx_mask_;
-    return this->q_.skip_blocking(idx, *this);
+    return this->q_->skip_blocking(idx, *this);
   }
 
   ConsumerReturnCode consume(T& dst) requires std::is_default_constructible_v<T>
   {
     size_t idx = this->consumer_next_idx_ & this->idx_mask_;
-    return this->q_.consume_raw_blocking(idx, reinterpret_cast<void*>(&dst), *this);
+    return this->q_->consume_raw_blocking(idx, reinterpret_cast<void*>(&dst), *this);
   }
 
   T consume() requires std::is_trivially_copyable_v<T>
   {
     size_t idx = this->consumer_next_idx_ & this->idx_mask_;
     alignas(T) std::byte raw[sizeof(T)];
-    auto ret_code = this->q_.consume_raw_blocking(idx, raw, *this);
+    auto ret_code = this->q_->consume_raw_blocking(idx, raw, *this);
     if (ConsumerReturnCode::Consumed == ret_code)
     {
       return *std::launder(reinterpret_cast<T*>(raw));
@@ -217,7 +251,7 @@ struct ConsumerBlocking : ConsumerBase<Queue>
   ConsumerReturnCode consume_raw(void* dst) requires std::is_trivially_copyable_v<T>
   {
     size_t idx = this->consumer_next_idx_ & this->idx_mask_;
-    return this->q_.consume_raw_blocking(idx, dst, *this);
+    return this->q_->consume_raw_blocking(idx, dst, *this);
   }
 };
 
@@ -227,6 +261,7 @@ struct ConsumerNonBlocking : ConsumerBase<Queue>
   using ConsumerBase<Queue>::ConsumerBase;
   using T = typename Queue::type;
 
+  static constexpr bool blocking_v = false;
   using const_iterator = typename ConsumerBase<Queue>::template const_iterator<ConsumerNonBlocking<Queue>>;
 
   const_iterator cbegin() requires std::input_iterator<const_iterator>
@@ -235,36 +270,36 @@ struct ConsumerNonBlocking : ConsumerBase<Queue>
   }
   const_iterator cend() requires std::input_iterator<const_iterator> { return const_iterator(); }
 
-  bool empty() const { return this->q_.empty(this->consumer_next_ids_ & this->idx_mask_, *this); }
+  bool empty() const { return this->q_->empty(this->consumer_next_ids_ & this->idx_mask_, *this); }
 
   const T* peek() const
   {
     size_t idx = this->consumer_next_idx_ & this->idx_mask_;
-    return this->q_.peek_non_blocking(idx, *this);
+    return this->q_->peek_non_blocking(idx, *this);
   }
 
   template <class F>
   ConsumerReturnCode consume(F&& f) requires(std::is_void_v<decltype((std::forward<F>(f)(std::declval<T>()), void()))>)
   {
     size_t idx = this->consumer_next_idx_ & this->idx_mask_;
-    return this->q_.consume_non_blocking(idx, *this, std::forward<F>(f));
+    return this->q_->consume_non_blocking(idx, *this, std::forward<F>(f));
   }
 
   ConsumerReturnCode skip()
   {
     size_t idx = this->consumer_next_idx_ & this->idx_mask_;
-    return this->q_.skip_non_blocking(idx, *this);
+    return this->q_->skip_non_blocking(idx, *this);
   }
 
   ConsumerReturnCode consume(T& dst) requires std::is_default_constructible_v<T>
   {
     size_t idx = this->consumer_next_idx_ & this->idx_mask_;
-    return this->q_.consume_raw_non_blocking(idx, reinterpret_cast<void*>(&dst), *this);
+    return this->q_->consume_raw_non_blocking(idx, reinterpret_cast<void*>(&dst), *this);
   }
 
   ConsumerReturnCode consume_raw(void* dst) requires std::is_trivially_copyable_v<T>
   {
     size_t idx = this->consumer_next_idx_ & this->idx_mask_;
-    return this->q_.consume_raw_non_blocking(idx, dst, *this);
+    return this->q_->consume_raw_non_blocking(idx, dst, *this);
   }
 };

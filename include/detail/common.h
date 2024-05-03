@@ -49,6 +49,13 @@ enum class ProducerReturnCode
   TryAgain
 };
 
+enum class ConsumerAttachReturnCode
+{
+  Stopped,
+  ConsumerLimitReached,
+  Attached
+};
+
 enum class ConsumerReturnCode
 {
   NothingToConsume,
