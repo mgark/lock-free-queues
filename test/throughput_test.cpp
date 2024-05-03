@@ -67,8 +67,9 @@ TEST_CASE("SPSC throughput test")
         auto end = std::chrono::system_clock::now();
         auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
         auto avg_time_ns = (totalMsgCount[i] ? (nanos.count() / totalMsgCount[i]) : 0);
-        TLOG << "Consumer [" << i << "] raw time per one item: " << avg_time_ns << "ns"
-             << " consumed [" << totalMsgCount[i] << " items \n";
+        TLOG << "Consumer [" << i << "] raw time per one item: " << avg_time_ns
+             << "ns, total_time_ms=" << nanos / (1000 * 1000) << " consumed [" << totalMsgCount[i]
+             << " items \n";
         CHECK(totalMsgCount[i] == N);
         CHECK(avg_time_ns < 40);
       }));
@@ -145,7 +146,8 @@ TEST_CASE("Conflated SPMC throughput test")
         double conflation_ratio = (double)n / items_num;
 
         TLOG << "Consumer [" << i << "] raw time per one item: " << avg_time_ns << "ns"
-             << " consumed [" << items_num << " items, conflation ratio = [" << conflation_ratio << "] \n";
+             << "total_time_ms=" << nanos / (1000 * 1000) << " consumed [" << items_num
+             << " items, conflation ratio = [" << conflation_ratio << "] \n";
         CHECK(avg_time_ns < 40);
         CHECK(conflation_ratio < 4.0);
       }));
@@ -225,7 +227,8 @@ TEST_CASE("Sequential MPMC throughput test")
           auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
           auto avg_time_ns = (totalMsgConsumed ? (nanos.count() / totalMsgConsumed) : 0);
           TLOG << "Consumer [" << consumer_id << "] raw time per one item: " << avg_time_ns << "ns"
-               << " consumed [" << totalMsgConsumed << " items \n";
+               << "total_time_ms=" << nanos / (1000 * 1000) << " consumed [" << totalMsgConsumed
+               << " items \n";
           CHECK(totalMsgConsumed == N);
           CHECK(avg_time_ns < 150);
         }
@@ -334,7 +337,8 @@ TEST_CASE("Unordered MPMC throughput test")
           auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
           auto avg_time_ns = (totalMsgConsumed ? (nanos.count() / totalMsgConsumed) : 0);
           TLOG << "Consumer [" << consumer_id << "] raw time per one item: " << avg_time_ns << "ns"
-               << " consumed [" << totalMsgConsumed << " items \n";
+               << "total_time_ms=" << nanos / (1000 * 1000) << " consumed [" << totalMsgConsumed
+               << " items \n";
           CHECK(totalMsgConsumed == N);
           CHECK(avg_time_ns < 150);
         }
@@ -424,7 +428,7 @@ TEST_CASE("Unordered SPMC throughput test")
           auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
           auto avg_time_ns = (totalVols[i] ? (nanos.count() / totalVols[i]) : 0);
           TLOG << "Consumer [" << i << "] raw time per one item: " << avg_time_ns << "ns"
-               << " consumed [" << totalVols[i] << " items \n";
+               << "total_time_ms=" << nanos / (1000 * 1000) << " consumed [" << totalVols[i] << " items \n";
           CHECK(totalVols[i] == N);
           CHECK(avg_time_ns < 150);
         }
@@ -561,7 +565,8 @@ TEST_CASE("Conflated MPMC - consumers joining at random times")
           auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
           auto avg_time_ns = (nanos.count() / totalMsgConsumed[i]);
           TLOG << "Consumer [" << i << "] Avg message time: " << avg_time_ns << "ns"
-               << " consumed [" << totalMsgConsumed[i] << " items \n";
+               << "total_time_ms=" << nanos / (1000 * 1000) << " consumed [" << totalMsgConsumed[i]
+               << " items \n";
         }
         catch (const std::exception& e)
         {

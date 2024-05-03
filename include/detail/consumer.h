@@ -252,6 +252,8 @@ struct ConsumerBlocking : ConsumerBase<Queue>
     {
       throw SlowConsumerExp();
     }
+
+    std::terminate();
   }
 
   ConsumeReturnCode consume_raw(void* dst) requires std::is_trivially_copyable_v<T>
