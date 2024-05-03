@@ -53,6 +53,7 @@ enum class ConsumerAttachReturnCode
 {
   Stopped,
   ConsumerLimitReached,
+  AlreadyAttached,
   Attached
 };
 

@@ -166,6 +166,11 @@ public:
 protected:
   ConsumerAttachReturnCode do_attach(Queue* q)
   {
+    if (q_)
+    {
+      return ConsumerAttachReturnCode::AlreadyAttached;
+    }
+
     n_ = q->size();
     idx_mask_ = n_ - 1;
 

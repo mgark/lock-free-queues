@@ -32,13 +32,15 @@ public:
   ProducerBase() = default;
   ProducerBase(Queue& q) { attach(q); }
   ~ProducerBase() { detach(); }
-  void attach(Queue& q)
+  bool attach(Queue& q)
   {
     if (q_)
     {
-      detach();
+      return false;
     }
+
     q_ = std::to_address(&q);
+    return true;
   }
   bool detach()
   {
