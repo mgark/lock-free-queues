@@ -60,9 +60,7 @@ public:
     Node* node = &data_[read_idx_];
     while (!node->busy.load(std::memory_order_acquire))
       ;
-    std::atomic_thread_fence(std::memory_order_acquire);
     T val = *std::launder(reinterpret_cast<T*>(node->paylod));
-    std::atomic_thread_fence(std::memory_order_acquire);
     read_idx_ = (read_idx_ + 1) & N_;
     node->busy.store(false, std::memory_order_release);
     return val;
@@ -76,9 +74,7 @@ public:
       ;
 
     ::new (node->paylod) T(std::forward<Args>(args)...);
-    std::atomic_thread_fence(std::memory_order_release);
     write_idx_ = (write_idx_ + 1) & N_;
-    std::atomic_thread_fence(std::memory_order_release);
     node->busy.store(true, std::memory_order_release);
   }
 };
