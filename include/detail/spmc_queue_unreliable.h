@@ -21,11 +21,11 @@
 #if defined(__x86_64__)
 
   #include "detail/common.h"
-  #include "spmc_multicast_queue_base.h"
+  #include "spmc_queue_base.h"
   #include <atomic>
   #include <type_traits>
 
-template <class T, ProducerKind producerKind = ProducerKind::Unordered,
+template <class T, ProducerKind producerKind = ProducerKind::SingleThreaded,
           size_t _MAX_CONSUMER_N_ = 16, size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>>
 class SPMCMulticastQueueUnreliable
   : public SPMCMulticastQueueBase<T, SPMCMulticastQueueUnreliable<T, producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>,

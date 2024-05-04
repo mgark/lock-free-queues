@@ -23,8 +23,9 @@
 #include <thread>
 
 #include "common_test_utils.h"
+#include "detail/common.h"
 
-TEST_CASE("Unordered SPMC attach detach test")
+TEST_CASE("SingleThreaded SPMC attach detach test")
 {
   std::string s;
   std::mutex guard;
@@ -33,7 +34,7 @@ TEST_CASE("Unordered SPMC attach detach test")
   constexpr size_t N = 10'000'000'000;
   constexpr size_t ATTACH_DETACH_ITERATIONS = 200;
   constexpr size_t CONSUMER_N = N / ATTACH_DETACH_ITERATIONS / 100;
-  using Queue = SPMCMulticastQueueReliable<OrderNonTrivial, ProducerKind::Unordered, 2 * _MAX_CONSUMERS_>;
+  using Queue = SPMCMulticastQueueReliable<OrderNonTrivial, ProducerKind::SingleThreaded, 2 * _MAX_CONSUMERS_>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
 
   size_t from = std::chrono::system_clock::now().time_since_epoch().count();
@@ -53,7 +54,6 @@ TEST_CASE("Unordered SPMC attach detach test")
           size_t consumed_num = 0;
           auto begin = std::chrono::system_clock::now();
           ConsumerBlocking<Queue> c(q);
-          ++consumer_joined_num;
           while (consumed_num < CONSUMER_N)
           {
             c.consume([consumer_id = i, &q, &consumed_num](const OrderNonTrivial& r) mutable
@@ -67,37 +67,33 @@ TEST_CASE("Unordered SPMC attach detach test")
           TLOG << "Consumer [" << i << "] raw time per one item: " << avg_time_ns << "ns"
                << " consumed [" << consumed_num << " items \n";
           CHECK(consumed_num == CONSUMER_N);
-          --consumer_joined_num;
         }
+        ++consumer_joined_num;
       }));
   }
-  while (consumer_joined_num.load() < _MAX_CONSUMERS_)
-    ;
   std::thread producer(
     [&q, &consumer_joined_num, N]()
     {
       ProducerBlocking<Queue> p(q);
       q.start();
 
-      auto begin = std::chrono::system_clock::now();
       size_t n = 1;
-      while (n <= N)
+      while (consumer_joined_num < _MAX_CONSUMERS_)
       {
-        if (p.emplace(OrderNonTrivial{n, 1U, 100.1, 'B'}) == ProduceReturnCode::Published)
-          ++n;
-
-        if (consumer_joined_num.load() == 0)
+        auto r = p.emplace(OrderNonTrivial{n, 1U, 100.1, 'B'});
+        if (r == ProduceReturnCode::NotRunning)
           break;
+        else if (r == ProduceReturnCode::Published)
+          n++;
       }
 
       q.stop();
     });
-
-  producer.join();
   for (auto& c : consumers)
   {
     c.join();
   }
+  producer.join();
 }
 
 int main(int argc, char** argv) { return Catch::Session().run(argc, argv); }

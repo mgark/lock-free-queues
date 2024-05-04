@@ -18,11 +18,11 @@
 
 #include "detail/common.h"
 #include "detail/spin_lock.h"
-#include "spmc_multicast_queue_base.h"
+#include "spmc_queue_base.h"
 #include <atomic>
 
-template <class T, ProducerKind producerKind = ProducerKind::Unordered, size_t _MAX_CONSUMER_N_ = 8,
-          size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>>
+template <class T, ProducerKind producerKind = ProducerKind::SingleThreaded,
+          size_t _MAX_CONSUMER_N_ = 8, size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>>
 class SPMCMulticastQueueReliable
   : public SPMCMulticastQueueBase<T, SPMCMulticastQueueReliable<T, producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>,
                                   producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>
@@ -164,80 +164,7 @@ public:
   }
 
   template <class Producer, class... Args, bool blocking = Producer::blocking_v>
-  ProduceReturnCode emplace(Producer& producer, Args&&... args) requires(producerKind == ProducerKind::Sequential)
-  {
-    if (!is_running())
-    {
-      if constexpr (blocking)
-      {
-        this->producer_ctx_.rollback_idx();
-      }
-      return ProduceReturnCode::NotRunning;
-    }
-
-    size_t& min_next_consumer_idx = producer.min_next_consumer_idx_;
-    size_t original_idx = producer.producer_idx_;
-    size_t idx = original_idx & this->idx_mask_;
-
-    Node& node = this->nodes_[idx];
-    size_t version = node.version_.load(std::memory_order_acquire);
-    size_t expected_version = original_idx / this->n_;
-    bool first_time_publish = min_next_consumer_idx == CONSUMER_IS_WELCOME;
-    bool no_free_slot = first_time_publish /*producer publishes first time*/ ||
-      (original_idx > min_next_consumer_idx && original_idx - min_next_consumer_idx >= this->n_) ||
-      expected_version != version;
-    while (no_free_slot || this->consumers_pending_attach_.load(std::memory_order_acquire))
-    {
-      min_next_consumer_idx = CONSUMER_IS_WELCOME;
-      auto max_consumer_id = this->max_consumer_id_.load(std::memory_order_acquire);
-      for (size_t i = 1; i <= max_consumer_id; ++i)
-      {
-        size_t consumer_next_idx = try_accept_new_consumer(i, original_idx);
-        if (consumer_next_idx < CONSUMER_JOIN_INPROGRESS)
-        {
-          min_next_consumer_idx = std::min(min_next_consumer_idx, consumer_next_idx);
-        }
-      }
-
-      if constexpr (blocking)
-      {
-        if (!is_running())
-        {
-          this->producer_ctx_.rollback_idx();
-          return ProduceReturnCode::NotRunning;
-        }
-      }
-
-      version = node.version_.load(std::memory_order_acquire);
-      no_free_slot = (min_next_consumer_idx != CONSUMER_IS_WELCOME && original_idx > min_next_consumer_idx &&
-                      original_idx - min_next_consumer_idx >= this->n_) ||
-        expected_version != version;
-
-      if constexpr (!blocking)
-      {
-        if (no_free_slot)
-        {
-          return ProduceReturnCode::TryAgain;
-        }
-      }
-    }
-
-    void* storage = node.storage_;
-    if constexpr (!std::is_trivially_destructible_v<T>)
-    {
-      if (version > 0)
-      {
-        NodeAllocTraits::destroy(this->alloc_, static_cast<T*>(storage));
-      }
-    }
-
-    NodeAllocTraits::construct(this->alloc_, static_cast<T*>(storage), std::forward<Args>(args)...);
-    node.version_.store(version + 1, std::memory_order_release);
-    return ProduceReturnCode::Published;
-  }
-
-  template <class Producer, class... Args, bool blocking = Producer::blocking_v>
-  ProduceReturnCode emplace(Producer& producer, Args&&... args) requires(producerKind == ProducerKind::Unordered)
+  ProduceReturnCode emplace(Producer& producer, Args&&... args)
   {
     if (!is_running())
     {

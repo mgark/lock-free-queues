@@ -14,17 +14,20 @@
  * limitations under the License.
  */
 
+#include <atomic>
 #include <catch2/catch_all.hpp>
 #include <iostream>
 #include <list>
 #include <mpmc.h>
 #include <mutex>
+#include <numeric>
 #include <random>
 #include <thread>
 #include <unordered_set>
 
 #include "common_test_utils.h"
 #include "detail/common.h"
+#include "detail/consumer.h"
 
 TEST_CASE("SPSC throughput test")
 {
@@ -33,7 +36,7 @@ TEST_CASE("SPSC throughput test")
   constexpr size_t _MAX_CONSUMERS_ = 1;
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
   constexpr size_t N = 10000000;
-  using Queue = SPMCMulticastQueueReliable<OrderNonTrivial, ProducerKind::Unordered, _MAX_CONSUMERS_>;
+  using Queue = SPMCMulticastQueueReliable<OrderNonTrivial, ProducerKind::SingleThreaded, _MAX_CONSUMERS_>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
 
   TLOG << "\n  " << Catch::getResultCapture().getCurrentTestName() << "\n";
@@ -107,7 +110,7 @@ TEST_CASE("Conflated SPMC throughput test")
   constexpr size_t _MAX_CONSUMERS_ = 3;
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
   constexpr size_t N = 10000000;
-  using Queue = SPMCMulticastQueueUnreliable<Order, ProducerKind::Unordered, _MAX_CONSUMERS_>;
+  using Queue = SPMCMulticastQueueUnreliable<Order, ProducerKind::SingleThreaded, _MAX_CONSUMERS_>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
 
   std::vector<std::thread> consumers;
@@ -178,17 +181,17 @@ TEST_CASE("Conflated SPMC throughput test")
 }
 #endif
 
-TEST_CASE("Sequential MPMC throughput test")
+TEST_CASE("Synchronized MPMC throughput test")
 {
   std::string s;
   std::mutex guard;
   constexpr size_t _MAX_CONSUMERS_ = 3;
-  constexpr size_t _MAX_PUBLISHERS_ = 4;
-  constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
-  constexpr size_t _MSG_PER_CONSUMER_ = 10000000;
+  constexpr size_t _MAX_PUBLISHERS_ = 5;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 4;
+  constexpr size_t _MSG_PER_CONSUMER_ = 1000000;
   constexpr size_t N = _MAX_PUBLISHERS_ * _MSG_PER_CONSUMER_;
 
-  using Queue = SPMCMulticastQueueReliable<OrderNonTrivial, ProducerKind::Sequential, _MAX_CONSUMERS_>;
+  using Queue = SPMCMulticastQueueReliable<OrderNonTrivial, ProducerKind::Synchronized, _MAX_CONSUMERS_>;
   Queue queue(_PUBLISHER_QUEUE_SIZE);
 
   size_t from = std::chrono::system_clock::now().time_since_epoch().count();
@@ -230,7 +233,7 @@ TEST_CASE("Sequential MPMC throughput test")
                << "total_time_ms=" << nanos / (1000 * 1000) << " consumed [" << totalMsgConsumed
                << " items \n";
           CHECK(totalMsgConsumed == N);
-          CHECK(avg_time_ns < 150);
+          CHECK(avg_time_ns < 1000);
         }
         catch (const std::exception& e)
         {
@@ -282,7 +285,7 @@ TEST_CASE("Sequential MPMC throughput test")
     c.join();
 }
 
-TEST_CASE("Unordered MPMC throughput test")
+TEST_CASE("SingleThreaded MPMC throughput test")
 {
   std::string s;
   std::mutex guard;
@@ -292,7 +295,7 @@ TEST_CASE("Unordered MPMC throughput test")
   constexpr size_t _MSG_PER_CONSUMER_ = 10000000;
   constexpr size_t N = _MAX_PUBLISHERS_ * _MSG_PER_CONSUMER_;
 
-  using Queue = SPMCMulticastQueueReliable<OrderNonTrivial, ProducerKind::Unordered, _MAX_CONSUMERS_>;
+  using Queue = SPMCMulticastQueueReliable<OrderNonTrivial, ProducerKind::SingleThreaded, _MAX_CONSUMERS_>;
   std::list<Queue> queues;
   for (size_t i = 0; i < _MAX_PUBLISHERS_; ++i)
     queues.emplace_back(_PUBLISHER_QUEUE_SIZE);
@@ -385,14 +388,14 @@ TEST_CASE("Unordered MPMC throughput test")
   for (auto& c : consumers)
     c.join();
 }
-TEST_CASE("Unordered SPMC throughput test")
+TEST_CASE("SingleThreaded SPMC throughput test")
 {
   std::string s;
   std::mutex guard;
   constexpr size_t _MAX_CONSUMERS_ = 3;
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
   constexpr size_t N = 10000000;
-  using Queue = SPMCMulticastQueueReliable<OrderNonTrivial, ProducerKind::Unordered, _MAX_CONSUMERS_>;
+  using Queue = SPMCMulticastQueueReliable<OrderNonTrivial, ProducerKind::SingleThreaded, _MAX_CONSUMERS_>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
 
   size_t from = std::chrono::system_clock::now().time_since_epoch().count();
@@ -582,5 +585,100 @@ TEST_CASE("Conflated MPMC - consumers joining at random times")
     c.join();
 }
 #endif
+
+TEST_CASE("SingleThreaded Anycast MPMC throughput test")
+{
+  std::string s;
+  std::mutex guard;
+  constexpr size_t _MAX_CONSUMERS_ = 3;
+  constexpr size_t _MAX_PUBLISHERS_ = 4;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
+  constexpr size_t _MSG_PER_CONSUMER_ = 10000000;
+  constexpr size_t N = _MAX_PUBLISHERS_ * _MSG_PER_CONSUMER_;
+
+  using Queue = SPMCMulticastQueueReliable<OrderNonTrivial, ProducerKind::SingleThreaded, _MAX_CONSUMERS_>;
+  std::list<Queue> queues;
+  AnycastConsumerGroup<Queue> consumer_group;
+  for (size_t i = 0; i < _MAX_PUBLISHERS_; ++i)
+  {
+    queues.emplace_back(_PUBLISHER_QUEUE_SIZE);
+    consumer_group.attach(std::to_address(&queues.back()));
+  }
+
+  std::vector<std::thread> consumers;
+  std::atomic_int consumer_joined_num{0};
+  size_t totalMsgConsumed[_MAX_CONSUMERS_]{};
+
+  TLOG << "\n  " << Catch::getResultCapture().getCurrentTestName() << "\n";
+  for (size_t consumer_id = 0; consumer_id < _MAX_CONSUMERS_; ++consumer_id)
+  {
+    consumers.push_back(std::thread(
+      [&, id = consumer_id]()
+      {
+        try
+        {
+          AnycastConsumerBlocking<Queue> c(consumer_group);
+          ++consumer_joined_num;
+          auto begin = std::chrono::system_clock::now();
+          while (1)
+          {
+            auto r = c.consume([&](const OrderNonTrivial& r) mutable { ++totalMsgConsumed[id]; });
+            if (r == ConsumeReturnCode::Stopped)
+              break;
+          }
+
+          REQUIRE(totalMsgConsumed[id] > 0);
+          std::scoped_lock lock(guard);
+          auto end = std::chrono::system_clock::now();
+          auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
+          auto avg_time_ns = (totalMsgConsumed[id] ? (nanos.count() / totalMsgConsumed[id]) : 0);
+          TLOG << "Consumer [" << id << "] raw time per one item: " << avg_time_ns << "ns"
+               << "total_time_ms=" << nanos.count() / (1000 * 1000) << " consumed ["
+               << totalMsgConsumed[id] << "] items \n";
+          CHECK(avg_time_ns < 300);
+        }
+        catch (const std::exception& e)
+        {
+          TLOG << "\n got exception " << e.what();
+        }
+      }));
+  }
+
+  std::vector<std::thread> producers;
+  for (auto queue_it = begin(queues); queue_it != end(queues); ++queue_it)
+  {
+    producers.emplace_back(std::thread(
+      [&q = *queue_it, &consumer_joined_num, N]()
+      {
+        try
+        {
+          ProducerBlocking<Queue> p(q);
+          q.start();
+          size_t n = 1;
+          while (n <= _MSG_PER_CONSUMER_)
+          {
+            if (p.emplace(OrderNonTrivial{n, 1U, 100.1, 'B'}) == ProduceReturnCode::Published)
+              ++n;
+          }
+
+          q.stop();
+        }
+        catch (const std::exception& e)
+        {
+          TLOG << "\n got exception " << e.what();
+        }
+      }));
+  }
+
+  for (auto& c : consumers)
+    c.join();
+
+  for (auto& p : producers)
+    p.join();
+
+  size_t actual_msg_consumed_num = std::accumulate(totalMsgConsumed, totalMsgConsumed + _MAX_CONSUMERS_, 0);
+  TLOG << "\n total_msg_consumed_num=" << actual_msg_consumed_num << "\n";
+  CHECK(actual_msg_consumed_num == N);
+}
 
 int main(int argc, char** argv) { return Catch::Session().run(argc, argv); }

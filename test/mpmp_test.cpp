@@ -21,7 +21,7 @@
 
 TEST_CASE("SPMC functional test")
 {
-  using Queue = SPMCMulticastQueueReliable<Order, ProducerKind::Unordered, 2>;
+  using Queue = SPMCMulticastQueueReliable<Order, ProducerKind::SingleThreaded, 2>;
   Queue q1(8);
   Queue q2(8);
 

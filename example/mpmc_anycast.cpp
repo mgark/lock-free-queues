@@ -14,36 +14,47 @@
  * limitations under the License.
  */
 
-#include "common_test_utils.h"
+#include "detail/common.h"
+#include "detail/consumer.h"
 #include <assert.h>
-#include <catch2/catch_all.hpp>
 #include <mpmc.h>
 
-TEST_CASE("MPSC functional test")
+struct Order
+{
+  size_t id;
+  size_t vol;
+  double price;
+  char side;
+
+  friend std::ostream& operator<<(std::ostream& out, const Order& o)
+  {
+    out << "id=" << o.id << " vol=" << o.vol << " price=" << o.price << " side=" << o.side << "\n";
+    return out;
+  }
+};
+
+int main()
 {
   using Queue = SPMCMulticastQueueReliable<Order, ProducerKind::SingleThreaded, 2>;
   Queue q1(8);
   Queue q2(8);
 
-  ConsumerBlocking<Queue> c1[2] = {q1, q2};
-  ProducerBlocking<Queue> p1;
-  ProducerBlocking<Queue> p2;
+  constexpr bool blocking = true;
+  AnycastConsumerGroup<Queue> consumer_group({&q1, &q2});
+  AnycastConsumerBlocking<Queue> c1(consumer_group);
+  AnycastConsumerBlocking<Queue> c2(consumer_group);
+  ProducerBlocking<Queue> p1(q1);
+  ProducerBlocking<Queue> p2(q2);
   q1.start();
   q2.start();
-  p1.attach(q1);
-  p2.attach(q2);
   {
-    auto r = p1.emplace(1u, 1u, 100.0, 'A');
-    CHECK(ProduceReturnCode::Published == r);
-    r = p2.emplace(2u, 2u, 100.0, 'A');
-    CHECK(ProduceReturnCode::Published == r);
+    p1.emplace(1u, 1u, 100.0, 'A');
+    p2.emplace(2u, 2u, 200.0, 'A');
   }
   {
-    auto r = c1[0].consume([](const Order& o) { std::cout << o; });
-    CHECK(ConsumeReturnCode::Consumed == r);
-    r = c1[1].consume([](const Order& o) { std::cout << o; });
-    CHECK(ConsumeReturnCode::Consumed == r);
+    c1.consume([](const Order& o) { std::cout << o; });
+    c2.consume([](const Order& o) { std::cout << o; });
   }
-}
 
-int main(int argc, char** argv) { return Catch::Session().run(argc, argv); }
+  return 0;
+}

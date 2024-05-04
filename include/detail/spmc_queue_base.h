@@ -22,7 +22,7 @@
 #include <memory>
 #include <string>
 
-template <class T, class Derived, ProducerKind producerKind = ProducerKind::Unordered,
+template <class T, class Derived, ProducerKind producerKind = ProducerKind::SingleThreaded,
           size_t _MAX_CONSUMER_N_ = 8, size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>>
 class SPMCMulticastQueueBase
 {
@@ -44,7 +44,7 @@ protected:
     alignas(T) std::byte storage_[sizeof(T)];
   };
 
-  struct ProducerContextUnordered
+  struct ProducerContextSingleThreaded
   {
     alignas(128) size_t producer_idx_{0};
     size_t aquire_idx() { return producer_idx_++; }
@@ -62,7 +62,7 @@ protected:
   using NodeAllocTraits = std::allocator_traits<NodeAllocator>;
 
   using ProducerContext =
-    std::conditional_t<producerKind == ProducerKind::Unordered, ProducerContextUnordered, ProducerContextSequencial>;
+    std::conditional_t<producerKind == ProducerKind::SingleThreaded, ProducerContextSingleThreaded, ProducerContextSequencial>;
 
   static_assert(std::is_default_constructible_v<Node>, "Node must be default constructible");
 

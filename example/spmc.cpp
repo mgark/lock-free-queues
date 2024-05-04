@@ -34,7 +34,7 @@ struct Order
 
 int main()
 {
-  using Queue = SPMCMulticastQueueReliable<Order, ProducerKind::Unordered, 2>;
+  using Queue = SPMCMulticastQueueReliable<Order, ProducerKind::SingleThreaded, 2>;
   Queue q(8);
 
   constexpr bool blocking = true;

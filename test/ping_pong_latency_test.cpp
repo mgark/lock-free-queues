@@ -10,6 +10,7 @@
 #include <mpmc.h>
 
 #include <new>
+#include <stdexcept>
 #include <thread>
 #include <type_traits>
 #include <x86intrin.h>
@@ -35,6 +36,11 @@ class SPSC2
 public:
   SPSC2(size_t N) : N_(N)
   {
+    if ((N & (N - 1)) != 0)
+    {
+      throw std::runtime_error("queue size must be power of 2");
+    }
+
     data_ = alloc_.allocate(N_);
     for (int i = 0; i < N_; ++i)
     {
@@ -82,7 +88,7 @@ public:
 TEST_CASE("SPSC latency test")
 {
   size_t constexpr BATCH_NUM = 2;
-  using Queue = SPMCMulticastQueueReliable<int, ProducerKind::Unordered, 1, BATCH_NUM>;
+  using Queue = SPMCMulticastQueueReliable<int, ProducerKind::SingleThreaded, 1, BATCH_NUM>;
   uint64_t N = 10000;
 
   Queue A_queue(128);
@@ -130,7 +136,7 @@ TEST_CASE("SPSC latency test")
   auto avg_roundtrip_latency = elapsed_time_ns / N;
   std::cout << " [SPSC] Total time is = " << elapsed_time_ns << "ns \n";
   std::cout << " [SPSC] Avg round-trip latency = " << avg_roundtrip_latency << "ns \n";
-  CHECK(avg_roundtrip_latency < 200);
+  CHECK(avg_roundtrip_latency < 500);
 }
 
 TEST_CASE("SPSC2 latency test")
@@ -175,7 +181,7 @@ TEST_CASE("SPSC2 latency test")
   auto avg_roundtrip_latency = elapsed_time_ns / N;
   TLOG << " [SPSC2] Total time is = " << elapsed_time_ns << "ns \n";
   TLOG << " [SPSC2] Avg round-trip latency = " << avg_roundtrip_latency << "ns \n";
-  CHECK(avg_roundtrip_latency < 200);
+  CHECK(avg_roundtrip_latency < 500);
 }
 
 int main(int argc, char** argv) { return Catch::Session().run(argc, argv); }

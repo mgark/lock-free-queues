@@ -18,5 +18,5 @@
 
 #include "detail/consumer.h"
 #include "detail/producer.h"
-#include "detail/spmc_multicast_queue_reliable.h"
-#include "detail/spmc_multicast_queue_unreliable.h"
+#include "detail/spmc_queue_reliable.h"
+#include "detail/spmc_queue_unreliable.h"

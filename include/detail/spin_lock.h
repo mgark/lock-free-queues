@@ -24,9 +24,15 @@ class Spinlock
 
 public:
   using scoped_lock = std::lock_guard<Spinlock>;
-  friend std::lock_guard<Spinlock>;
 
-private:
+  bool try_lock() noexcept
+  {
+    if (!lock_.load(std::memory_order_relaxed) && !lock_.exchange(1, std::memory_order_acquire))
+      return true;
+
+    return false;
+  }
+
   void lock() noexcept
   {
     while (1)

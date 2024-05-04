@@ -39,7 +39,7 @@ TEST_CASE("SPMC conflated queue stress test to detect race conditions")
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 1;
   constexpr size_t N = 300000000;
   constexpr size_t BATCH_NUM = 1;
-  using Queue = SPMCMulticastQueueUnreliable<Vector, ProducerKind::Unordered, _MAX_CONSUMERS_, BATCH_NUM>;
+  using Queue = SPMCMulticastQueueUnreliable<Vector, ProducerKind::SingleThreaded, _MAX_CONSUMERS_, BATCH_NUM>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
   ProducerBlocking<Queue> p(q);
 
@@ -132,7 +132,7 @@ TEST_CASE("SPMC queue stress test to detect race conditions")
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 32;
   constexpr size_t N = 30000000;
   constexpr size_t BATCH_NUM = 2;
-  using Queue = SPMCMulticastQueueReliable<Vector, ProducerKind::Unordered, _MAX_CONSUMERS_, BATCH_NUM>;
+  using Queue = SPMCMulticastQueueReliable<Vector, ProducerKind::SingleThreaded, _MAX_CONSUMERS_, BATCH_NUM>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
 
   size_t from;
@@ -195,8 +195,9 @@ TEST_CASE("SPMC queue stress test to detect race conditions")
   }
 }
 
-TEST_CASE("SPMC sequential queue stress test to detect race conditions")
+TEST_CASE("SPMC Synchronized queue stress test to detect race conditions")
 {
+  // TODO: fix to support multie producers!
   struct Vector
   {
     bool odd;
@@ -224,7 +225,7 @@ TEST_CASE("SPMC sequential queue stress test to detect race conditions")
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 16;
   constexpr size_t N = 3000000;
   constexpr size_t BATCH_NUM = 2;
-  using Queue = SPMCMulticastQueueReliable<Vector, ProducerKind::Sequential, _MAX_CONSUMERS_, BATCH_NUM>;
+  using Queue = SPMCMulticastQueueReliable<Vector, ProducerKind::Synchronized, _MAX_CONSUMERS_, BATCH_NUM>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
 
   size_t from;

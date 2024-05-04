@@ -38,8 +38,8 @@
 
 enum class ProducerKind
 {
-  Unordered,
-  Sequential
+  SingleThreaded,
+  Synchronized
 };
 
 enum class ProduceReturnCode

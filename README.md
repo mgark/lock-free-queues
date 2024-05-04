@@ -1,7 +1,7 @@
 
 # Introduction
 
-Fairly generic header-only and slot based (byte ones will come as well) lock-free implemenation for **multicast**(**anycast** will come soon as well) SPSC, MPMC, MPSC, SCMP. Note that in case of multi consumers, all of them would get a copy of data.  The idea is to provide the same interface for all of those queues and allow multiple compile-time options to tune them for real scenarios.  Also sequential publishing is supported for multi-producer scenarios with a compile time setting.
+Fairly generic header-only and slot based (byte ones will come as well) lock-free implemenation for **multicast**(**anycast** will come soon as well) SPSC, MPMC, MPSC, SCMP. Note that in case of multi consumers, all of them would get a copy of data.  The idea is to provide the same interface for all of those queues and allow multiple compile-time options to tune them for real scenarios.  Also SingleThreaded publishing is supported for multi-producer scenarios with a compile time setting.
 
 # Design
 
@@ -25,7 +25,7 @@ Consumers don't need to track their index even, just check if a given slot got a
 - lock-free / wait-free. There is only one tiny usage of spin-locks on the slow path
 - dynamic consumers attach / detach
 - single producer / consumer interface for all kinds of queues
-- sequential mutti-publishers supported
+- SingleThreaded mutti-publishers supported
 - it is pretty pretty fast.
 - multiple compile-time tweaks
 - supports reading data through input iterators
