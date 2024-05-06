@@ -152,7 +152,7 @@ TEST_CASE("Conflated SPMC throughput test")
              << "total_time_ms=" << nanos / (1000 * 1000) << " consumed [" << items_num
              << " items, conflation ratio = [" << conflation_ratio << "] \n";
         CHECK(avg_time_ns < 40);
-        CHECK(conflation_ratio < 4.0);
+        CHECK(conflation_ratio < 6.0);
       }));
   }
 

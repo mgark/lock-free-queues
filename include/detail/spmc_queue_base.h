@@ -46,14 +46,14 @@ protected:
 
   struct ProducerContextSingleThreaded
   {
-    alignas(128) size_t producer_idx_{0};
+    alignas(64) size_t producer_idx_{0};
     size_t aquire_idx() { return producer_idx_++; }
     void rollback_idx() { --producer_idx_; }
   };
 
   struct ProducerContextSequencial
   {
-    alignas(128) std::atomic<size_t> producer_idx_{0};
+    alignas(64) std::atomic<size_t> producer_idx_{0};
     size_t aquire_idx() { return producer_idx_.fetch_add(1, std::memory_order_acquire); }
     void rollback_idx() { producer_idx_.fetch_sub(1, std::memory_order_acquire); }
   };
@@ -66,24 +66,31 @@ protected:
 
   static_assert(std::is_default_constructible_v<Node>, "Node must be default constructible");
 
+  // these variables pretty much don't change throug the lifetime of the queue
   size_t n_;
   size_t items_per_batch_;
-  std::atomic<QueueState> state_{QueueState::Created};
   size_t idx_mask_;
-
-  ProducerContext producer_ctx_;
-  alignas(128) Node* nodes_;
-  alignas(128) std::atomic<int> consumers_pending_attach_;
-
-  using ConsumerProgressType = std::array<std::atomic<size_t>, _MAX_CONSUMER_N_ + 1>;
-  using ConsumerRegistryType = std::array<std::atomic<bool>, _MAX_CONSUMER_N_ + 1>;
-
-  alignas(128) ConsumerProgressType consumers_progress_;
-  alignas(128) ConsumerRegistryType consumers_registry_;
-
   size_t max_outstanding_non_consumed_items_;
-  std::atomic<size_t> max_consumer_id_;
   NodeAllocator alloc_;
+  Node* nodes_;
+
+  struct alignas(64) ConsumerProgress
+  {
+    std::atomic<size_t> idx;
+  };
+
+  using ConsumerProgressArray = std::array<ConsumerProgress, _MAX_CONSUMER_N_ + 1>;
+  using ConsumerRegistryArray = std::array<std::atomic<bool>, _MAX_CONSUMER_N_ + 1>;
+
+  // these variables update quite frequently
+  alignas(64) ProducerContext producer_ctx_;
+  alignas(64) ConsumerProgressArray consumers_progress_;
+  alignas(64) ConsumerRegistryArray consumers_registry_;
+
+  // these variables change somewhat infrequently
+  alignas(64) std::atomic<int> consumers_pending_attach_;
+  std::atomic<QueueState> state_{QueueState::Created};
+  std::atomic<size_t> max_consumer_id_;
   Spinlock slow_path_guard_;
 
 public:
@@ -119,7 +126,9 @@ public:
       throw std::runtime_error("items_per_batch_ is not power of two");
     }
 
-    std::fill(std::begin(consumers_progress_), std::end(consumers_progress_), CONSUMER_IS_WELCOME);
+    for (auto it = std::begin(consumers_progress_); it != std::end(consumers_progress_); ++it)
+      it->idx.store(CONSUMER_IS_WELCOME, std::memory_order_release);
+
     std::fill(std::begin(consumers_registry_), std::end(consumers_registry_), 0 /*unlocked*/);
 
     nodes_ = std::allocator_traits<NodeAllocator>::allocate(alloc_, N);

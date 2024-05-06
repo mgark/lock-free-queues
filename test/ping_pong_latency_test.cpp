@@ -28,8 +28,8 @@ class SPSC2
   static_assert(std::is_trivially_destructible_v<T>);
 
   Node* data_;
-  alignas(128) size_t read_idx_{0};
-  alignas(128) size_t write_idx_{0};
+  alignas(64) size_t read_idx_{0};
+  alignas(64) size_t write_idx_{0};
   std::allocator<Node> alloc_;
   size_t N_;
 
@@ -91,12 +91,12 @@ TEST_CASE("SPSC latency test")
   using Queue = SPMCMulticastQueueReliable<int, ProducerKind::SingleThreaded, 1, BATCH_NUM>;
   uint64_t N = 10000;
 
-  Queue A_queue(128);
+  Queue A_queue(64);
   ConsumerBlocking<Queue> A_consumer(A_queue);
   ProducerBlocking<Queue> A_producer(A_queue);
   A_queue.start();
 
-  Queue B_queue(128);
+  Queue B_queue(64);
   ConsumerBlocking<Queue> B_consumer(B_queue);
   ProducerBlocking<Queue> B_producer(B_queue);
   B_queue.start();
@@ -142,8 +142,8 @@ TEST_CASE("SPSC latency test")
 TEST_CASE("SPSC2 latency test")
 {
   uint64_t N = 10000;
-  SPSC2<int> A_queue(128);
-  SPSC2<int> B_queue(128);
+  SPSC2<int> A_queue(64);
+  SPSC2<int> B_queue(64);
 
   volatile uint64_t elapsed_time_ns = 0;
   std::jthread B_thread(

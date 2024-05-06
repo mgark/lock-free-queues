@@ -29,7 +29,7 @@
 #include <utility>
 
 template <class Queue>
-class alignas(128) ConsumerBase
+class alignas(64) ConsumerBase
 {
 protected:
   Queue* q_;
@@ -325,7 +325,7 @@ struct ConsumerNonBlocking : ConsumerBase<Queue>
 };
 
 template <class Queue, size_t MAX_SIZE = 8>
-struct AnycastConsumerGroup
+struct alignas(64) AnycastConsumerGroup
 {
   using T = typename Queue::type;
   using ConsumerType = ConsumerNonBlocking<Queue>;
@@ -411,7 +411,7 @@ struct AnycastConsumerGroup
 };
 
 template <class Queue>
-class AnycastConsumerBlocking
+class alignas(64) AnycastConsumerBlocking
 {
   using ConsumerGroupType = AnycastConsumerGroup<Queue>;
   size_t current_queue_idx_{0};

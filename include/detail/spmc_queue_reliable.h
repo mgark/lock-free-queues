@@ -60,14 +60,14 @@ public:
             if (!is_running())
             {
               // if the queue has not started, then let's assign the next read idx by ourselves!
-              this->consumers_progress_.at(i).store(0, std::memory_order_release);
+              this->consumers_progress_.at(i).idx.store(0, std::memory_order_release);
               producer_need_to_accept = false;
             }
           }
 
           if (producer_need_to_accept)
           {
-            this->consumers_progress_.at(i).store(CONSUMER_JOIN_REQUESTED, std::memory_order_release);
+            this->consumers_progress_.at(i).idx.store(CONSUMER_JOIN_REQUESTED, std::memory_order_release);
             this->consumers_pending_attach_.fetch_add(1, std::memory_order_release);
           }
 
@@ -84,7 +84,7 @@ public:
           do
           {
             stopped = is_stopped();
-            consumer_next_idx = this->consumers_progress_.at(i).load(std::memory_order_relaxed);
+            consumer_next_idx = this->consumers_progress_.at(i).idx.load(std::memory_order_relaxed);
           } while (!stopped && consumer_next_idx >= CONSUMER_JOIN_INPROGRESS);
 
           if (stopped)
@@ -108,7 +108,7 @@ public:
     bool is_locked = locker.load(std::memory_order_acquire);
     if (is_locked)
     {
-      this->consumers_progress_.at(consumer_id).store(CONSUMER_IS_WELCOME, std::memory_order_release);
+      this->consumers_progress_.at(consumer_id).idx.store(CONSUMER_IS_WELCOME, std::memory_order_release);
       if (locker.compare_exchange_strong(is_locked, false, std::memory_order_release, std::memory_order_relaxed))
       {
         // this->consumers_pending_dettach_.fetch_add(1, std::memory_order_release);
@@ -123,7 +123,7 @@ public:
         auto new_max_consumer_id = _MAX_CONSUMER_N_;
         while (new_max_consumer_id > 0)
         {
-          if (this->consumers_progress_.at(new_max_consumer_id).load(std::memory_order_relaxed) == CONSUMER_IS_WELCOME)
+          if (this->consumers_progress_.at(new_max_consumer_id).idx.load(std::memory_order_relaxed) == CONSUMER_IS_WELCOME)
             --new_max_consumer_id;
           else
           {
@@ -148,15 +148,15 @@ public:
 
   size_t try_accept_new_consumer(size_t i, size_t original_idx)
   {
-    size_t consumer_next_idx = this->consumers_progress_[i].load(std::memory_order_relaxed);
+    size_t consumer_next_idx = this->consumers_progress_[i].idx.load(std::memory_order_relaxed);
     if (CONSUMER_JOIN_REQUESTED == consumer_next_idx)
     {
       // new consumer wants a ticket!
-      if (this->consumers_progress_[i].compare_exchange_strong(
+      if (this->consumers_progress_[i].idx.compare_exchange_strong(
             consumer_next_idx, CONSUMER_JOIN_INPROGRESS, std::memory_order_relaxed, std::memory_order_relaxed))
       {
         consumer_next_idx = original_idx;
-        this->consumers_progress_[i].store(consumer_next_idx, std::memory_order_relaxed);
+        this->consumers_progress_[i].idx.store(consumer_next_idx, std::memory_order_relaxed);
         this->consumers_pending_attach_.fetch_sub(1, std::memory_order_release);
       }
     }
@@ -253,7 +253,8 @@ public:
       ++consumer.consumer_next_idx_;
       if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
       {
-        this->consumers_progress_[consumer.consumer_id_].store(consumer.consumer_next_idx_, std::memory_order_relaxed);
+        this->consumers_progress_[consumer.consumer_id_].idx.store(consumer.consumer_next_idx_,
+                                                                   std::memory_order_relaxed);
         consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
       }
 
@@ -283,7 +284,8 @@ public:
       ++consumer.consumer_next_idx_;
       if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
       {
-        this->consumers_progress_[consumer.consumer_id_].store(consumer.consumer_next_idx_, std::memory_order_relaxed);
+        this->consumers_progress_[consumer.consumer_id_].idx.store(consumer.consumer_next_idx_,
+                                                                   std::memory_order_relaxed);
         consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
       }
       return ConsumeReturnCode::Consumed;
