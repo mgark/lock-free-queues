@@ -1,7 +1,7 @@
 
 # Introduction
 
-Fairly generic header-only and slot based (byte ones will come as well) lock-free implemenation for **multicast**(**anycast** will come soon as well) SPSC, MPMC, MPSC, SCMP. Note that in case of multi consumers, all of them would get a copy of data.  The idea is to provide the same interface for all of those queues and allow multiple compile-time options to tune them for real scenarios.  Also SingleThreaded publishing is supported for multi-producer scenarios with a compile time setting.
+Fairly generic header-only and slot based (byte ones will come as well) lock-free implemenation for **multicast**(**anycast** will come soon as well) SPSC, MPMC, MPSC, SCMP. Note that in case of multi consumers, all of them would get a copy of data.  The idea is to provide the same interface for all of those queues and allow multiple compile-time options to tune them for real scenarios.  Also Synchronized publishing is supported for multi-producer scenarios with a compile time setting.
 
 # Design
 
