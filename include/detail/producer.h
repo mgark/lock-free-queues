@@ -27,7 +27,7 @@ struct alignas(64) ProducerSynchronizedContext
   std::atomic<size_t> min_next_consumer_idx_;
 
   ProducerSynchronizedContext()
-  { // first increment will make it 0!
+  {
     producer_idx_.store(0, std::memory_order_release);
     min_next_consumer_idx_.store(CONSUMER_IS_WELCOME, std::memory_order_release);
   }
@@ -53,7 +53,11 @@ struct alignas(64) ProducerSingleThreadedContext
   size_t get_min_next_consumer_idx_cached() const { return min_next_consumer_idx_; }
   void cache_min_next_consumer_idx(size_t idx) { min_next_consumer_idx_ = idx; }
 
-  size_t aquire_idx() { return ++producer_idx_; }
+  size_t aquire_idx()
+  {
+    // first increment will make it 0!
+    return ++producer_idx_;
+  }
 };
 
 template <class Queue, ProducerKind producerKind, class Derived>

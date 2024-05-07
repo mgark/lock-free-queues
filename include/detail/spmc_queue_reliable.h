@@ -189,6 +189,11 @@ public:
       no_free_slot = (min_next_consumer_idx_local != CONSUMER_IS_WELCOME &&
                       original_idx - min_next_consumer_idx_local >= this->n_);
 
+      if (!is_running())
+      {
+        return ProduceReturnCode::NotRunning;
+      }
+
       if constexpr (!blocking)
       {
         if (no_free_slot)
