@@ -25,17 +25,14 @@
   #include <atomic>
   #include <type_traits>
 
-template <class T, ProducerKind producerKind = ProducerKind::SingleThreaded,
-          size_t _MAX_CONSUMER_N_ = 16, size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>>
+template <class T, size_t _MAX_CONSUMER_N_ = 16, size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>>
 class SPMCMulticastQueueUnreliable
-  : public SPMCMulticastQueueBase<T, SPMCMulticastQueueUnreliable<T, producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>,
-                                  producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>
+  : public SPMCMulticastQueueBase<T, SPMCMulticastQueueUnreliable<T, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>
 {
   static_assert(std::is_trivially_copyable_v<T>);
 
 public:
-  using Base =
-    SPMCMulticastQueueBase<T, SPMCMulticastQueueUnreliable, producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>;
+  using Base = SPMCMulticastQueueBase<T, SPMCMulticastQueueUnreliable, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>;
   using NodeAllocTraits = typename Base::NodeAllocTraits;
   using Node = typename Base::Node;
   using ConsumerTicket = typename Base::ConsumerTicket;
@@ -106,21 +103,16 @@ public:
   }
 
   template <class Producer, class... Args, bool blocking = Producer::blocking_v>
-  ProduceReturnCode emplace(Producer& producer, Args&&... args)
+  ProduceReturnCode emplace(size_t original_idx, Producer& producer, Args&&... args)
   {
     if (!is_running())
     {
-      if constexpr (blocking)
-      {
-        this->producer_ctx_.rollback_idx();
-      }
       return ProduceReturnCode::NotRunning;
     }
 
     // the whole point for the producer is just keep publishing to the new
     // slots regardless of where consumers are or at what state they are
 
-    size_t original_idx = producer.producer_idx_;
     size_t idx = original_idx & this->idx_mask_;
     Node& node = this->nodes_[idx];
     {

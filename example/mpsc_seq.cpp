@@ -15,6 +15,7 @@
  */
 
 #include "detail/common.h"
+#include "detail/producer.h"
 #include <assert.h>
 #include <mpmc.h>
 
@@ -34,14 +35,15 @@ struct Order
 
 int main()
 {
-  using Queue = SPMCMulticastQueueReliable<Order, ProducerKind::Synchronized, 2>;
+  ProducerSynchronizedContext producer_group;
+  using Queue = SPMCMulticastQueueReliable<Order, 2>;
   Queue q1(8);
   Queue q2(8);
 
   constexpr bool blocking = true;
   ConsumerBlocking<Queue> c1[2] = {q1, q2};
-  ProducerBlocking<Queue> p1(q1);
-  ProducerBlocking<Queue> p2(q2);
+  ProducerBlocking<Queue, ProducerKind::Synchronized> p1(q1, producer_group);
+  ProducerBlocking<Queue, ProducerKind::Synchronized> p2(q2, producer_group);
   q1.start();
   q2.start();
   {

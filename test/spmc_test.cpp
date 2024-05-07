@@ -23,7 +23,7 @@
 
 TEST_CASE("SPMC functional test")
 {
-  using Queue = SPMCMulticastQueueReliable<Order, ProducerKind::SingleThreaded, 2>;
+  using Queue = SPMCMulticastQueueReliable<Order, 2>;
   Queue q(8);
 
   constexpr bool blocking = true;

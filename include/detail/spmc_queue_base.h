@@ -22,8 +22,7 @@
 #include <memory>
 #include <string>
 
-template <class T, class Derived, ProducerKind producerKind = ProducerKind::SingleThreaded,
-          size_t _MAX_CONSUMER_N_ = 8, size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>>
+template <class T, class Derived, size_t _MAX_CONSUMER_N_ = 8, size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>>
 class SPMCMulticastQueueBase
 {
 public:
@@ -44,26 +43,8 @@ protected:
     alignas(T) std::byte storage_[sizeof(T)];
   };
 
-  struct ProducerContextSingleThreaded
-  {
-    alignas(64) size_t producer_idx_{0};
-    size_t aquire_idx() { return producer_idx_++; }
-    void rollback_idx() { --producer_idx_; }
-  };
-
-  struct ProducerContextSequencial
-  {
-    alignas(64) std::atomic<size_t> producer_idx_{0};
-    size_t aquire_idx() { return producer_idx_.fetch_add(1, std::memory_order_acquire); }
-    void rollback_idx() { producer_idx_.fetch_sub(1, std::memory_order_acquire); }
-  };
-
   using NodeAllocator = typename std::allocator_traits<Allocator>::template rebind_alloc<Node>;
   using NodeAllocTraits = std::allocator_traits<NodeAllocator>;
-
-  using ProducerContext =
-    std::conditional_t<producerKind == ProducerKind::SingleThreaded, ProducerContextSingleThreaded, ProducerContextSequencial>;
-
   static_assert(std::is_default_constructible_v<Node>, "Node must be default constructible");
 
   // these variables pretty much don't change throug the lifetime of the queue
@@ -83,7 +64,6 @@ protected:
   using ConsumerRegistryArray = std::array<std::atomic<bool>, _MAX_CONSUMER_N_ + 1>;
 
   // these variables update quite frequently
-  alignas(64) ProducerContext producer_ctx_;
   alignas(64) ConsumerProgressArray consumers_progress_;
   alignas(64) ConsumerRegistryArray consumers_registry_;
 

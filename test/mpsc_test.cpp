@@ -21,7 +21,7 @@
 
 TEST_CASE("MPSC functional test")
 {
-  using Queue = SPMCMulticastQueueReliable<Order, ProducerKind::SingleThreaded, 2>;
+  using Queue = SPMCMulticastQueueReliable<Order, 2>;
   Queue q1(8);
   Queue q2(8);
 

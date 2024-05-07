@@ -1,5 +1,6 @@
 #include "common_test_utils.h"
 #include "detail/common.h"
+#include "detail/producer.h"
 #include <algorithm>
 #include <assert.h>
 #include <catch2/catch_all.hpp>
@@ -39,7 +40,7 @@ TEST_CASE("SPMC conflated queue stress test to detect race conditions")
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 1;
   constexpr size_t N = 300000000;
   constexpr size_t BATCH_NUM = 1;
-  using Queue = SPMCMulticastQueueUnreliable<Vector, ProducerKind::SingleThreaded, _MAX_CONSUMERS_, BATCH_NUM>;
+  using Queue = SPMCMulticastQueueUnreliable<Vector, _MAX_CONSUMERS_, BATCH_NUM>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
   ProducerBlocking<Queue> p(q);
 
@@ -132,7 +133,7 @@ TEST_CASE("SPMC queue stress test to detect race conditions")
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 32;
   constexpr size_t N = 30000000;
   constexpr size_t BATCH_NUM = 2;
-  using Queue = SPMCMulticastQueueReliable<Vector, ProducerKind::SingleThreaded, _MAX_CONSUMERS_, BATCH_NUM>;
+  using Queue = SPMCMulticastQueueReliable<Vector, _MAX_CONSUMERS_, BATCH_NUM>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
 
   size_t from;
@@ -225,7 +226,7 @@ TEST_CASE("SPMC Synchronized queue stress test to detect race conditions")
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 16;
   constexpr size_t N = 3000000;
   constexpr size_t BATCH_NUM = 2;
-  using Queue = SPMCMulticastQueueReliable<Vector, ProducerKind::Synchronized, _MAX_CONSUMERS_, BATCH_NUM>;
+  using Queue = SPMCMulticastQueueReliable<Vector, _MAX_CONSUMERS_, BATCH_NUM>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
 
   size_t from;
@@ -255,13 +256,14 @@ TEST_CASE("SPMC Synchronized queue stress test to detect race conditions")
       }));
   }
 
+  ProducerSynchronizedContext producer_group;
   std::thread producer(
-    [&q, &from, &odd_vector, &even_vector, &consumer_joined_num, N]()
+    [&q, &from, &odd_vector, &even_vector, &consumer_joined_num, N, &producer_group]()
     {
       while (consumer_joined_num.load() < _MAX_CONSUMERS_)
         ;
 
-      ProducerBlocking<Queue> p(q);
+      ProducerBlocking<Queue, ProducerKind::Synchronized> p(q, producer_group);
       q.start();
       from = std::chrono::system_clock::now().time_since_epoch().count();
       size_t n = 1;

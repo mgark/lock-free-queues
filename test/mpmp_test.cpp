@@ -19,9 +19,9 @@
 #include <catch2/catch_all.hpp>
 #include <mpmc.h>
 
-TEST_CASE("SPMC functional test")
+TEST_CASE("MPMC functional test")
 {
-  using Queue = SPMCMulticastQueueReliable<Order, ProducerKind::SingleThreaded, 2>;
+  using Queue = SPMCMulticastQueueReliable<Order, 2>;
   Queue q1(8);
   Queue q2(8);
 

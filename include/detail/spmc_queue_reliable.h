@@ -21,15 +21,12 @@
 #include "spmc_queue_base.h"
 #include <atomic>
 
-template <class T, ProducerKind producerKind = ProducerKind::SingleThreaded,
-          size_t _MAX_CONSUMER_N_ = 8, size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>>
+template <class T, size_t _MAX_CONSUMER_N_ = 8, size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>>
 class SPMCMulticastQueueReliable
-  : public SPMCMulticastQueueBase<T, SPMCMulticastQueueReliable<T, producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>,
-                                  producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>
+  : public SPMCMulticastQueueBase<T, SPMCMulticastQueueReliable<T, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>
 {
 public:
-  using Base =
-    SPMCMulticastQueueBase<T, SPMCMulticastQueueReliable, producerKind, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>;
+  using Base = SPMCMulticastQueueBase<T, SPMCMulticastQueueReliable, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>;
   using NodeAllocTraits = typename Base::NodeAllocTraits;
   using Node = typename Base::Node;
   using ConsumerTicket = typename Base::ConsumerTicket;
@@ -164,47 +161,33 @@ public:
   }
 
   template <class Producer, class... Args, bool blocking = Producer::blocking_v>
-  ProduceReturnCode emplace(Producer& producer, Args&&... args)
+  ProduceReturnCode emplace(size_t original_idx, Producer& producer, Args&&... args)
   {
     if (!is_running())
     {
-      if constexpr (blocking)
-      {
-        this->producer_ctx_.rollback_idx();
-      }
       return ProduceReturnCode::NotRunning;
     }
 
-    size_t original_idx = producer.producer_idx_;
-    size_t& min_next_consumer_idx = producer.min_next_consumer_idx_;
+    int i = 0;
+    size_t min_next_consumer_idx = producer.get_min_next_consumer_idx_cached();
     bool first_time_publish = min_next_consumer_idx == CONSUMER_IS_WELCOME;
     bool no_free_slot = first_time_publish || (original_idx - min_next_consumer_idx >= this->n_);
     while (no_free_slot || this->consumers_pending_attach_.load(std::memory_order_acquire))
     {
-      min_next_consumer_idx = CONSUMER_IS_WELCOME;
+      size_t min_next_consumer_idx_local = CONSUMER_IS_WELCOME;
       auto max_consumer_id = this->max_consumer_id_.load(std::memory_order_acquire);
       for (size_t i = 1; i <= max_consumer_id; ++i)
       {
         size_t consumer_next_idx = try_accept_new_consumer(i, original_idx);
         if (consumer_next_idx < CONSUMER_JOIN_INPROGRESS)
         {
-          min_next_consumer_idx = std::min(min_next_consumer_idx, consumer_next_idx);
+          min_next_consumer_idx_local = std::min(min_next_consumer_idx_local, consumer_next_idx);
         }
       }
 
-      // while we inside a tight loop the queue might
-      // have had stopped so we need to terminate the loop
-      if constexpr (blocking)
-      {
-        if (!is_running())
-        {
-          this->producer_ctx_.rollback_idx();
-          return ProduceReturnCode::NotRunning;
-        }
-      }
-
-      no_free_slot = (min_next_consumer_idx != CONSUMER_IS_WELCOME &&
-                      original_idx - min_next_consumer_idx >= this->n_);
+      producer.cache_min_next_consumer_idx(min_next_consumer_idx_local);
+      no_free_slot = (min_next_consumer_idx_local != CONSUMER_IS_WELCOME &&
+                      original_idx - min_next_consumer_idx_local >= this->n_);
 
       if constexpr (!blocking)
       {
