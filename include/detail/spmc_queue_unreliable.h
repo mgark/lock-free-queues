@@ -181,27 +181,6 @@ public:
       return ConsumeReturnCode::NothingToConsume;
     }
   }
-
-  template <class C>
-  bool empty(size_t idx, C& consumer)
-  {
-    Node& node = this->nodes_[idx];
-    size_t version = node.version_.load(std::memory_order_acquire);
-    return consumer.previous_version_ >= version;
-  }
-
-  template <class C>
-  const T* peek(size_t idx, Node& node, size_t version, C& consumer) const
-  {
-    if (consumer.previous_version_ < version)
-    {
-      return reinterpret_cast<const T*>(node.storage_);
-    }
-    else
-    {
-      return nullptr;
-    }
-  }
 };
 
 #endif

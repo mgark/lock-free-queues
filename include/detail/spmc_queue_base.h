@@ -262,22 +262,22 @@ public:
   const T* peek_blocking(size_t idx, C& consumer) const
   {
     Node& node = this->nodes_[idx];
-    bool stopped = false;
+    bool running = false;
     const T* r;
     do
     {
       size_t version = node.version_.load(std::memory_order_acquire);
-      stopped = this->stopped_.load(std::memory_order_acquire);
       r = peek(idx, node, version, consumer);
       if (r)
       {
         return r;
       }
-    } while (!stopped);
+      running = this->is_running();
+    } while (!running);
     return nullptr;
   }
 
-  template <class C, class F>
+  template <class C>
   const T* peek_non_blocking(size_t idx, C& consumer) const
   {
     Node& node = this->nodes_[idx];
@@ -330,15 +330,12 @@ public:
 
   size_t size() const { return this->n_; }
 
-  size_t aquire_idx() { return this->producer_ctx_.aquire_idx(); }
-  size_t rollback_idx() { return this->producer_ctx_.rollback_idx(); }
-
   template <class C>
   bool empty(size_t idx, C& consumer)
   {
     Node& node = this->nodes_[idx];
     size_t version = node.version_.load(std::memory_order_acquire);
-    return consumer.previous_version_ >= version;
+    return consumer.previous_version_ >= version || !is_running();
   }
 
   template <class C>

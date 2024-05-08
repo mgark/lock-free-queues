@@ -43,6 +43,7 @@ protected:
   std::atomic_bool slow_consumer_; // TODO: not implemented fully yet
 
   friend Queue;
+  friend typename Queue::Base;
 
 public:
   using T = typename Queue::type;
@@ -76,6 +77,8 @@ public:
   bool is_slow_consumer() const noexcept { return slow_consumer_.load(std::memory_order_acquire); }
   bool is_stopped() const noexcept { return this->q_->is_stopped(); }
 
+  bool empty() const { return this->q_->empty(this->consumer_next_idx_ & this->idx_mask_, *this); }
+
 protected:
   ConsumerAttachReturnCode do_attach(Queue* q)
   {
@@ -108,14 +111,14 @@ protected:
   }
 };
 
-template <class Derived>
+template <class Consumer>
 struct const_consumer_iterator
 {
 private:
-  Derived* c_;
+  Consumer* c_;
 
 public:
-  using value_type = typename Derived::T;
+  using value_type = typename Consumer::T;
 
   using iterator_category = std::input_iterator_tag;
   using difference_type = std::ptrdiff_t;
@@ -129,8 +132,16 @@ public:
   };
 
   const_consumer_iterator() noexcept : c_(nullptr) {}
-  const_consumer_iterator(Derived* c) noexcept : c_(c) {}
-  const_consumer_iterator(const_consumer_iterator&& other) noexcept : c_(other.c_)
+  const_consumer_iterator(Consumer* c) noexcept : c_(c)
+  {
+    if (nullptr == c_ || nullptr == c_->peek())
+    {
+      // nothing to consume, hence we reached the end
+      c_ = nullptr;
+    }
+  }
+  const_consumer_iterator(const_consumer_iterator&& other) noexcept
+    : const_consumer_iterator(std::move(other).c_)
   {
     other.c_ = nullptr;
   }
@@ -138,7 +149,7 @@ public:
 
   const_consumer_iterator& operator=(const_consumer_iterator&& other) noexcept
   {
-    c_ = other.c_;
+    c_ = std::move(other).c_;
     other.c_ = nullptr;
   }
 
@@ -149,7 +160,8 @@ public:
     {
       throw std::runtime_error(
         "item is not available through operator*() "
-        "as most likely queue has stopped");
+        "as most likely queue has stopped or consumer became slow! You can query if consumer was "
+        "slow by calling is_slow_consumer func on the consumer object");
     }
     return *r;
   }
@@ -160,17 +172,16 @@ public:
     {
       throw std::runtime_error(
         "item is not available through operator*() "
-        "as most likely queue has stopped");
+        "as most likely queue has stopped or consumer became slow! You can query if consumer was "
+        "slow by calling is_slow_consumer func on the consumer object");
     }
     return r;
   }
 
   const_consumer_iterator& operator++()
   {
-    if (c_->skip() != ConsumeReturnCode::Consumed)
-    {
+    if (c_->skip() != ConsumeReturnCode::Consumed || c_->empty())
       c_ = nullptr; // reached the end! so effectively it is end iterator now
-    }
 
     return *this;
   }
@@ -188,10 +199,9 @@ public:
     }
 
     proxy v(std::move(*r));
-    if (!c_->skip())
-    {
+    if (c_->skip() != ConsumeReturnCode::Consumed || c_->empty())
       c_ = nullptr; // reached the end! so effectively it is end iterator now
-    }
+
     return v;
   }
 
@@ -218,8 +228,6 @@ struct ConsumerBlocking : ConsumerBase<Queue>
     return const_iterator(this);
   }
   const_iterator cend() requires std::input_iterator<const_iterator> { return const_iterator(); }
-
-  bool empty() const { return this->q_->empty(this->consumer_next_ids_ & this->idx_mask_, *this); }
 
   const T* peek() const
   {
@@ -289,8 +297,6 @@ struct ConsumerNonBlocking : ConsumerBase<Queue>
     return const_iterator(this);
   }
   const_iterator cend() requires std::input_iterator<const_iterator> { return const_iterator(); }
-
-  bool empty() const { return this->q_->empty(this->consumer_next_ids_ & this->idx_mask_, *this); }
 
   const T* peek() const
   {
