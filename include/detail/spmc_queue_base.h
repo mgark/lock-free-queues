@@ -273,7 +273,7 @@ public:
         return r;
       }
       running = this->is_running();
-    } while (!running);
+    } while (running);
     return nullptr;
   }
 

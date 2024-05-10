@@ -165,6 +165,7 @@ public:
     }
     return *r;
   }
+
   pointer operator->() const
   {
     auto* r = c_->peek();
@@ -180,8 +181,16 @@ public:
 
   const_consumer_iterator& operator++()
   {
-    if (c_->skip() != ConsumeReturnCode::Consumed || c_->empty())
-      c_ = nullptr; // reached the end! so effectively it is end iterator now
+    if constexpr (Consumer::blocking_v)
+    {
+      if (c_->skip() != ConsumeReturnCode::Consumed || nullptr == c_->peek())
+        c_ = nullptr; // reached the end! so effectively it is end iterator now
+    }
+    else
+    {
+      if (c_->skip() != ConsumeReturnCode::Consumed || c_->empty())
+        c_ = nullptr; // reached the end! so effectively it is end iterator now
+    }
 
     return *this;
   }
@@ -199,9 +208,18 @@ public:
     }
 
     proxy v(std::move(*r));
-    if (c_->skip() != ConsumeReturnCode::Consumed || c_->empty())
-      c_ = nullptr; // reached the end! so effectively it is end iterator now
-
+    if constexpr (Consumer::blocking_v)
+    {
+      // in blocking mode it is important to do peek after skip since you'd want to block until you've incremented
+      // and if increment failed because the queue has stopped than you can just compare the iterator to the end iterator
+      if (c_->skip() != ConsumeReturnCode::Consumed || c_->peek() != ConsumeReturnCode::Consumed)
+        c_ = nullptr; // reached the end! so effectively it is end iterator now
+    }
+    else
+    {
+      if (c_->skip() != ConsumeReturnCode::Consumed || c_->empty())
+        c_ = nullptr; // reached the end! so effectively it is end iterator now
+    }
     return v;
   }
 
@@ -346,13 +364,17 @@ struct alignas(64) AnycastConsumerGroup
   AnycastConsumerGroup(std::initializer_list<Queue*> queues)
   {
     for (Queue* q : queues)
+    {
       attach(q);
+    }
   }
 
   ~AnycastConsumerGroup()
   {
     for (Queue* q : queues)
+    {
       detach(q);
+    }
   }
 
   size_t size() const { return max_idx.load(std::memory_order_relaxed) + 1; }
