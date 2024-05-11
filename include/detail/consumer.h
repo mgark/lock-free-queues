@@ -26,6 +26,7 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 
 template <class Queue>
@@ -452,8 +453,57 @@ public:
     : consumer_group_(consumer_group)
   {
   }
+
   template <class F>
   ConsumeReturnCode consume(F&& f) requires(std::is_void_v<decltype((std::forward<F>(f)(std::declval<T>()), void()))>)
+  {
+    return do_consume_blocking(
+      [f_captured = std::forward<F>(f)]<typename ConsumerType>(ConsumerType& consumer_non_blocking) mutable
+      { return consumer_non_blocking.consume(std::forward<F>(f_captured)); });
+  }
+
+  ConsumeReturnCode consume(T& dst) requires std::is_default_constructible_v<T>
+  {
+    return do_consume_blocking(
+      [&dst]<typename ConsumerType>(ConsumerType& consumer_non_blocking) mutable
+      { return consumer_non_blocking.consume_raw(reinterpret_cast<void*>(&dst)); });
+  }
+
+  T consume() requires std::is_trivially_copyable_v<T>
+  {
+    alignas(T) std::byte raw[sizeof(T)];
+    auto ret_code = consume_raw(raw);
+    if (ConsumeReturnCode::Consumed == ret_code)
+    {
+      return *std::launder(reinterpret_cast<T*>(raw));
+    }
+    else if (ConsumeReturnCode::Stopped == ret_code)
+    {
+      throw QueueStoppedExp();
+    }
+    else if (ConsumeReturnCode::SlowConsumer == ret_code)
+    {
+      throw SlowConsumerExp();
+    }
+    else
+    {
+      throw std::runtime_error(std::string("unknown consumer ret code [")
+                                 .append(std::to_string(static_cast<int>(ret_code)))
+                                 .append("]"));
+    }
+  }
+
+  ConsumeReturnCode consume_raw(void* dst) requires(std::is_trivially_copyable_v<T>&& std::is_trivially_destructible_v<T>)
+  {
+
+    return do_consume_blocking([&dst]<typename ConsumerType>(ConsumerType& consumer_non_blocking)
+                               { return consumer_non_blocking.consume_raw(dst); });
+  }
+
+private:
+  template <class F>
+  ConsumeReturnCode do_consume_blocking(F&& consumer_routine) requires(
+    std::is_same_v<decltype(std::forward<F>(consumer_routine)(std::declval<std::add_lvalue_reference_t<typename ConsumerGroupType::ConsumerType>>())), ConsumeReturnCode>)
   {
     ConsumeReturnCode prev_ret = ConsumeReturnCode::NothingToConsume;
     uint32_t consecutive_stops = 0;
@@ -463,7 +513,9 @@ public:
     {
       queues_num = consumer_group_.size();
       if (0 == queues_num)
+      {
         continue;
+      }
 
       size_t idx = current_queue_idx_;
       Spinlock& spinlock = consumer_group_.queue_locks[idx];
@@ -475,7 +527,7 @@ public:
           // this check is very necesary as by the time we've been trying to get a lock the queue might have been detached or even newly attached
           typename ConsumerGroupType::ConsumerType& consumer_non_blocking =
             consumer_group_.consumers[current_queue_idx_];
-          ConsumeReturnCode current_ret = consumer_non_blocking.consume(std::forward<F>(f));
+          ConsumeReturnCode current_ret = std::forward<F>(consumer_routine)(consumer_non_blocking);
           if (current_ret == ConsumeReturnCode::Consumed)
           {
             return current_ret;
@@ -498,5 +550,105 @@ public:
     } while (prev_ret == ConsumeReturnCode::NothingToConsume || queues_num > consecutive_stops);
 
     return prev_ret;
+  }
+};
+
+template <class Queue>
+class alignas(64) AnycastConsumerNonBlocking
+{
+  using ConsumerGroupType = AnycastConsumerGroup<Queue>;
+  size_t current_queue_idx_{0};
+  AnycastConsumerGroup<Queue>& consumer_group_;
+
+public:
+  using T = typename Queue::type;
+
+  AnycastConsumerNonBlocking(AnycastConsumerGroup<Queue>& consumer_group)
+    : consumer_group_(consumer_group)
+  {
+  }
+
+  template <class F>
+  ConsumeReturnCode consume(F&& f) requires(std::is_void_v<decltype((std::forward<F>(f)(std::declval<T>()), void()))>)
+  {
+    return do_consume_nonblocking(
+      [f_captured = std::forward<F>(f)]<typename ConsumerType>(ConsumerType& consumer_non_blocking) mutable
+      { return consumer_non_blocking.consume(std::forward<F>(f_captured)); });
+  }
+
+  ConsumeReturnCode consume(T& dst) requires std::is_default_constructible_v<T>
+  {
+    return do_consume_nonblocking(
+      [&dst]<typename ConsumerType>(ConsumerType& consumer_non_blocking) mutable
+      { return consumer_non_blocking.consume_raw(reinterpret_cast<void*>(&dst)); });
+  }
+
+  T consume() requires std::is_trivially_copyable_v<T>
+  {
+    alignas(T) std::byte raw[sizeof(T)];
+    auto ret_code = consume_raw(raw);
+    if (ConsumeReturnCode::Consumed == ret_code)
+    {
+      return *std::launder(reinterpret_cast<T*>(raw));
+    }
+    else if (ConsumeReturnCode::Stopped == ret_code)
+    {
+      throw QueueStoppedExp();
+    }
+    else if (ConsumeReturnCode::SlowConsumer == ret_code)
+    {
+      throw SlowConsumerExp();
+    }
+    else
+    {
+      throw std::runtime_error(std::string("unknown consumer ret code [")
+                                 .append(std::to_string(static_cast<int>(ret_code)))
+                                 .append("]"));
+    }
+  }
+
+  ConsumeReturnCode consume_raw(void* dst) requires(std::is_trivially_copyable_v<T>&& std::is_trivially_destructible_v<T>)
+  {
+
+    return do_consume_nonblocking([&dst]<typename ConsumerType>(ConsumerType& consumer_non_blocking)
+                                  { return consumer_non_blocking.consume_raw(dst); });
+  }
+
+private:
+  template <class F>
+  ConsumeReturnCode do_consume_nonblocking(F&& consumer_routine) requires(
+    std::is_same_v<decltype(std::forward<F>(consumer_routine)(std::declval<std::add_lvalue_reference_t<typename ConsumerGroupType::ConsumerType>>())), ConsumeReturnCode>)
+  {
+    uint32_t consecutive_stops = 0;
+    size_t idx = current_queue_idx_;
+    size_t orig_idx = idx;
+    do
+    {
+      size_t queues_num = consumer_group_.size();
+      if (0 == queues_num)
+      {
+        return ConsumeReturnCode::NothingToConsume;
+      }
+
+      current_queue_idx_ = (current_queue_idx_ + 1) % queues_num;
+
+      Spinlock& spinlock = consumer_group_.queue_locks[idx];
+      if (spinlock.try_lock())
+      {
+        Spinlock::scoped_lock autounlock(spinlock, std::adopt_lock);
+        if (consumer_group_.queues[idx].load(std::memory_order_relaxed) != nullptr)
+        {
+          // this check is very necesary as by the time we've been trying to get a lock the queue might have been detached or even newly attached
+          typename ConsumerGroupType::ConsumerType& consumer_non_blocking = consumer_group_.consumers[idx];
+          ConsumeReturnCode r = std::forward<F>(consumer_routine)(consumer_non_blocking);
+          if (r != ConsumeReturnCode::NothingToConsume)
+            return r;
+        }
+      }
+
+      idx = current_queue_idx_;
+    } while (idx != orig_idx);
+
+    return ConsumeReturnCode::NothingToConsume;
   }
 };
