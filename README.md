@@ -25,7 +25,7 @@ Consumers don't need to track their index even, just check if a given slot got a
 - lock-free / wait-free. There is only one tiny usage of spin-locks on the slow path
 - dynamic consumers attach / detach
 - single producer / consumer interface for all kinds of queues
-- SingleThreaded mutti-publishers supported
+- Synchronized mutti-publishers supported
 - it is pretty pretty fast.
 - multiple compile-time tweaks
 - supports reading data through input iterators
