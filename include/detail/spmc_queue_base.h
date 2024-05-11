@@ -54,33 +54,17 @@ protected:
   size_t max_outstanding_non_consumed_items_;
   NodeAllocator alloc_;
   Node* nodes_;
-
-  struct alignas(64) ConsumerProgress
-  {
-    std::atomic<size_t> idx;
-  };
-
-  using ConsumerProgressArray = std::array<ConsumerProgress, _MAX_CONSUMER_N_ + 1>;
-  using ConsumerRegistryArray = std::array<std::atomic<bool>, _MAX_CONSUMER_N_ + 1>;
+  Spinlock slow_path_guard_;
 
   // these variables update quite frequently
-  alignas(64) ConsumerProgressArray consumers_progress_;
-  alignas(64) ConsumerRegistryArray consumers_registry_;
-
-  // these variables change somewhat infrequently
-  alignas(64) std::atomic<int> consumers_pending_attach_;
   std::atomic<QueueState> state_{QueueState::Created};
-  std::atomic<size_t> max_consumer_id_;
-  Spinlock slow_path_guard_;
 
 public:
   SPMCMulticastQueueBase(std::size_t N, const Allocator& alloc = Allocator())
     : n_(N),
       items_per_batch_(n_ / _BATCH_NUM_),
       idx_mask_(n_ - 1),
-      consumers_pending_attach_(0),
       max_outstanding_non_consumed_items_((_BATCH_NUM_ - 1) * items_per_batch_),
-      max_consumer_id_(0),
       alloc_(alloc)
   {
     if ((N & (N - 1)) != 0)
@@ -105,11 +89,6 @@ public:
     {
       throw std::runtime_error("items_per_batch_ is not power of two");
     }
-
-    for (auto it = std::begin(consumers_progress_); it != std::end(consumers_progress_); ++it)
-      it->idx.store(CONSUMER_IS_WELCOME, std::memory_order_release);
-
-    std::fill(std::begin(consumers_registry_), std::end(consumers_registry_), 0 /*unlocked*/);
 
     nodes_ = std::allocator_traits<NodeAllocator>::allocate(alloc_, N);
     std::uninitialized_default_construct(nodes_, nodes_ + N);

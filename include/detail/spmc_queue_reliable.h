@@ -25,6 +25,21 @@ template <class T, size_t _MAX_CONSUMER_N_ = 8, size_t _BATCH_NUM_ = 4, class Al
 class SPMCMulticastQueueReliable
   : public SPMCMulticastQueueBase<T, SPMCMulticastQueueReliable<T, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>
 {
+  struct alignas(64) ConsumerProgress
+  {
+    std::atomic<size_t> idx;
+  };
+
+  using ConsumerProgressArray = std::array<ConsumerProgress, _MAX_CONSUMER_N_ + 1>;
+  using ConsumerRegistryArray = std::array<std::atomic<bool>, _MAX_CONSUMER_N_ + 1>;
+
+  alignas(64) ConsumerProgressArray consumers_progress_;
+  alignas(64) ConsumerRegistryArray consumers_registry_;
+
+  // these variables change somewhat infrequently
+  alignas(64) std::atomic<int> consumers_pending_attach_;
+  std::atomic<size_t> max_consumer_id_;
+
 public:
   using Base = SPMCMulticastQueueBase<T, SPMCMulticastQueueReliable, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>;
   using NodeAllocTraits = typename Base::NodeAllocTraits;
@@ -37,6 +52,15 @@ public:
   using Base::is_stopped;
   using Base::start;
   using Base::stop;
+
+  SPMCMulticastQueueReliable(std::size_t N, const Allocator& alloc = Allocator())
+    : Base(N, alloc), consumers_pending_attach_(0), max_consumer_id_(0)
+  {
+    for (auto it = std::begin(consumers_progress_); it != std::end(consumers_progress_); ++it)
+      it->idx.store(CONSUMER_IS_WELCOME, std::memory_order_release);
+
+    std::fill(std::begin(consumers_registry_), std::end(consumers_registry_), 0 /*unlocked*/);
+  }
 
   template <class Consumer>
   ConsumerTicket attach_consumer(Consumer& c)

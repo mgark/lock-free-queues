@@ -47,60 +47,16 @@ public:
   template <class Consumer>
   ConsumerTicket attach_consumer(Consumer& c)
   {
-    for (size_t i = 1; i < _MAX_CONSUMER_N_ + 1; ++i)
-    {
-      std::atomic<bool>& locker = this->consumers_registry_.at(i);
-      bool is_locked = locker.load(std::memory_order_acquire);
-      if (!is_locked)
-      {
-        if (locker.compare_exchange_strong(is_locked, true, std::memory_order_release, std::memory_order_relaxed))
-        {
-          if (is_stopped())
-          {
-            return {0, CONSUMER_IS_WELCOME, std::numeric_limits<size_t>::max(), ConsumerAttachReturnCode::Stopped};
-          }
-
-          return {i, 0 /*does not matter basically*/, std::numeric_limits<size_t>::max(),
-                  ConsumerAttachReturnCode::Attached};
-        } // else someone stole the locker just before us!
-      }
-    }
-
-    return {0, CONSUMER_IS_WELCOME, std::numeric_limits<size_t>::max(),
-            ConsumerAttachReturnCode::ConsumerLimitReached};
+    // we can have as many as consumers as possibliy can since the conflated queue does not specifically track consumers
+    return {0, 0 /*does not matter basically*/, std::numeric_limits<size_t>::max(),
+            ConsumerAttachReturnCode::Attached};
   }
 
   /*
     Return value: true - given consumer was locked and now it has been unlcoked
                   false - given consumer was already unlocked
   */
-  bool detach_consumer(size_t consumer_id)
-  {
-    std::atomic<bool>& locker = this->consumers_registry_.at(consumer_id);
-    bool is_locked = locker.load(std::memory_order_acquire);
-    if (is_locked)
-    {
-      if (locker.compare_exchange_strong(is_locked, false, std::memory_order_release, std::memory_order_relaxed))
-      {
-        // consumers_pending_dettach_.fetch_add(1, std::memory_order_release);
-        //  technically even possible that while we unregistered it another
-        //  thread, another consumer stole our slot legitimately and we just
-        //  removed it from the registery, effectively leaking it...
-        //  so unlocked the same consumer on multiple threads is really a bad
-        //  idea
-        return true;
-      }
-      else
-      {
-
-        throw std::runtime_error(
-          "unregister_consumer called on another thread "
-          "for the same consumer at the same time!");
-      }
-    }
-
-    return false;
-  }
+  bool detach_consumer(size_t consumer_id) { return true; }
 
   template <class Producer, class... Args, bool blocking = Producer::blocking_v>
   ProduceReturnCode emplace(size_t original_idx, Producer& producer, Args&&... args)
