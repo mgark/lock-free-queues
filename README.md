@@ -38,7 +38,7 @@ Consumers don't need to track their index even, just check if a given slot got a
 - full clang support
 - easy installation on target platforms
 - write more tests
-- [anycast queues] provide an option for multi consumers to exclusively consume items from the queue, which is more like a traditional queue.
+- ~[anycast queues] provide an option for multi consumers to exclusively consume items from the queue, which is more like a traditional queue.~
 - implement slow consumer handling by allowing ring queue to grow dynamically - up to a limit. Also with this feature you'd get a pretty much unbounded queue as well and it would be very fast.
 - benchmark against other implementations, including Java's Disruptor
 - support for queues over shared memory
