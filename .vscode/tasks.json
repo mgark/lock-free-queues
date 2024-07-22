@@ -7,7 +7,7 @@
             "command": "cmake --build . --target ${fileBasenameNoExtension}; pwd",
             "args": [],
             "options": {
-                "cwd": "${workspaceFolder}/build/example"
+                "cwd": "${workspaceFolder}/build/${buildType}/example"
             },
             "problemMatcher": [
                 "$gcc"
@@ -19,7 +19,7 @@
             "type": "shell",
             "command": "./${fileBasenameNoExtension}",
             "options": {
-                "cwd": "${workspaceFolder}/build/example"
+                "cwd": "${workspaceFolder}/build/${buildTyp}/example"
             },
             "problemMatcher": [],
             "dependsOn": [
@@ -36,7 +36,7 @@
             "command": "test/${fileBasenameNoExtension}",
             "args": [],
             "options": {
-                "cwd": "${workspaceFolder}/build"
+                "cwd": "${workspaceFolder}/build/${buildType}"
             },
             "problemMatcher": [],
             "dependsOn": [

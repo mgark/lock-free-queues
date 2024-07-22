@@ -36,7 +36,7 @@ struct Order
 int main()
 {
   ProducerSynchronizedContext producer_group;
-  using Queue = SPMCMulticastQueueReliable<Order, 2>;
+  using Queue = SPMCMulticastQueueReliableBounded<Order, 2>;
   Queue q1(8);
   Queue q2(8);
 

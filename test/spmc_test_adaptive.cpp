@@ -21,10 +21,10 @@
 #include <catch2/catch_all.hpp>
 #include <mpmc.h>
 
-TEST_CASE("SPMC functional test")
+TEST_CASE("SPMC Adaptive functional test")
 {
-  using Queue = SPMCMulticastQueueReliableBounded<Order, 2>;
-  Queue q(8);
+  using Queue = SPMCMulticastQueueReliableAdaptiveBounded<Order, 2, 2>;
+  Queue q(2, 8);
 
   constexpr bool blocking = true;
   ConsumerBlocking<Queue> c1;
@@ -33,15 +33,28 @@ TEST_CASE("SPMC functional test")
   CHECK(ConsumerAttachReturnCode::Attached == c1.attach(q));
   CHECK(ConsumerAttachReturnCode::Attached == c2.attach(q));
   q.start();
+
+  CHECK(q.capacity() == 6);
+  CHECK(q.max_queue_num() == 2);
+
+  // Producer
   {
-    auto r = p.emplace(1u, 1u, 100.0, 'A');
-    CHECK(ProduceReturnCode::Published == r);
+    for (size_t i = 1; i <= 6; ++i)
+    {
+      CHECK(ProduceReturnCode::Published == p.emplace(i, i, 100.0, 'A'));
+      std::cout << "pushed i=" << i << "\n";
+    }
   }
+
+  // Consumer
   {
-    auto r = c1.consume([&q](const Order& o) mutable { std::cout << o; });
-    CHECK(ConsumeReturnCode::Consumed == r);
-    r = c2.consume([&q](const Order& o) mutable { std::cout << o; });
-    CHECK(ConsumeReturnCode::Consumed == r);
+    for (size_t i = 1; i <= 6; ++i)
+    {
+      CHECK(ConsumeReturnCode::Consumed ==
+            c1.consume([&q, i](const Order& o) mutable { CHECK(o.id == i); }));
+      CHECK(ConsumeReturnCode::Consumed ==
+            c2.consume([&q, i](const Order& o) mutable { CHECK(o.id == i); }));
+    }
   }
 }
 

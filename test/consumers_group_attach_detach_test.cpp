@@ -22,7 +22,7 @@ TEST_CASE("SingleThreaded Anycast MPMC attach detach test")
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
   constexpr size_t _ATTACH_DETACH_ITERATIONS_ = 50000;
 
-  using Queue = SPMCMulticastQueueReliable<OrderNonTrivial, _MAX_CONSUMERS_>;
+  using Queue = SPMCMulticastQueueReliableBounded<OrderNonTrivial, _MAX_CONSUMERS_>;
   std::deque<Queue> queues;
   for (size_t i = 0; i < _MAX_PUBLISHERS_; ++i)
   {

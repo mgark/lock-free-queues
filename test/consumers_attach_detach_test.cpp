@@ -34,7 +34,7 @@ TEST_CASE("SingleThreaded SPMC attach detach test")
   constexpr size_t N = 10'000'000'000;
   constexpr size_t ATTACH_DETACH_ITERATIONS = 200;
   constexpr size_t CONSUMER_N = N / ATTACH_DETACH_ITERATIONS / 100;
-  using Queue = SPMCMulticastQueueReliable<OrderNonTrivial, 2 * _MAX_CONSUMERS_>;
+  using Queue = SPMCMulticastQueueReliableBounded<OrderNonTrivial, 2 * _MAX_CONSUMERS_>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
 
   size_t from = std::chrono::system_clock::now().time_since_epoch().count();

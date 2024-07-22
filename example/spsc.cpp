@@ -34,7 +34,7 @@ struct Order
 
 int main()
 {
-  using Queue = SPMCMulticastQueueReliable<Order, 1>;
+  using Queue = SPMCMulticastQueueReliableBounded<Order, 1>;
   Queue q(8);
 
   constexpr bool blocking = true;

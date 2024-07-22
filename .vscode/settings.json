@@ -10,6 +10,7 @@
     "editor.quickSuggestionsDelay": 0,
     "editor.wordWrap": "on",
     "editor.fontSize": 16,
+    "testMate.cpp.test.runtimeLimit": 15,
     "cmake.configureOnOpen": false,
     "cmake.buildDirectory": "${workspaceRoot}/build/${buildType}",
     "editor.autoClosingQuotes": "never",

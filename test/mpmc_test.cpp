@@ -21,7 +21,7 @@
 
 TEST_CASE("MPMC functional test")
 {
-  using Queue = SPMCMulticastQueueReliable<Order, 2>;
+  using Queue = SPMCMulticastQueueReliableBounded<Order, 2>;
   Queue q1(8);
   Queue q2(8);
 
@@ -53,7 +53,7 @@ TEST_CASE("MPMC functional test")
 
 TEST_CASE("MPMC Anycasy Blocking consumer functional test")
 {
-  using Queue = SPMCMulticastQueueReliable<Order, 2>;
+  using Queue = SPMCMulticastQueueReliableBounded<Order, 2>;
   Queue q1(8);
   Queue q2(8);
 
@@ -118,7 +118,7 @@ TEST_CASE("MPMC Anycasy Blocking consumer functional test")
 
 TEST_CASE("MPMC Anycasy Non-Blocking consumer functional test")
 {
-  using Queue = SPMCMulticastQueueReliable<Order, 2>;
+  using Queue = SPMCMulticastQueueReliableBounded<Order, 2>;
   Queue q1(8);
   Queue q2(8);
 

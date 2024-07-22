@@ -18,5 +18,6 @@
 
 #include "detail/consumer.h"
 #include "detail/producer.h"
-#include "detail/spmc_queue_reliable.h"
+#include "detail/spmc_queue_reliable_bounded.h"
+#include "detail/spmc_queue_reliable_bounded_adaptive.h"
 #include "detail/spmc_queue_unreliable.h"

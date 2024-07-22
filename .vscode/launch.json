@@ -8,14 +8,14 @@
             "name": "debug-cpp",
             "type": "lldb",
             "request": "launch",
-            "program": "${workspaceFolder}/build/example/${fileBasenameNoExtension}",
-            "cwd": "${workspaceFolder}/build/example",
+            "program": "${workspaceFolder}/build/example/${buildType}/${fileBasenameNoExtension}",
+            "cwd": "${workspaceFolder}/build/${buildTyp}/example",
         },
         {
             "name": "cpp",
             "request": "launch",
-            "program": "${workspaceFolder}/build/example/${fileBasenameNoExtension}",
-            "cwd": "${workspaceFolder}/build/example",
+            "program": "${workspaceFolder}/build/example/${buildType}/${fileBasenameNoExtension}",
+            "cwd": "${workspaceFolder}/build/${buildTyp}/example",
         }
     ]
 }

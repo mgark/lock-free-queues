@@ -22,7 +22,7 @@
 
 TEST_CASE("SPSC basic functional test")
 {
-  using Queue = SPMCMulticastQueueReliable<Order, 1>;
+  using Queue = SPMCMulticastQueueReliableBounded<Order, 1>;
   Queue q(8);
 
   constexpr bool blocking = true;
@@ -44,7 +44,7 @@ TEST_CASE("SPSC basic functional test")
 TEST_CASE("SPSC stop / start test")
 {
   // test stop and stating the queue few times
-  using Queue = SPMCMulticastQueueReliable<Order, 1>;
+  using Queue = SPMCMulticastQueueReliableBounded<Order, 1>;
   Queue q(8);
 
   constexpr bool blocking = true;

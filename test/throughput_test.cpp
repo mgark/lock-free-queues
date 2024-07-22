@@ -37,7 +37,7 @@ TEST_CASE("SPSC throughput test")
   constexpr size_t _MAX_CONSUMERS_ = 1;
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
   constexpr size_t N = 10000000;
-  using Queue = SPMCMulticastQueueReliable<OrderNonTrivial, _MAX_CONSUMERS_>;
+  using Queue = SPMCMulticastQueueReliableBounded<OrderNonTrivial, _MAX_CONSUMERS_>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
 
   TLOG << "\n  " << Catch::getResultCapture().getCurrentTestName() << "\n";
@@ -192,7 +192,7 @@ TEST_CASE("Synchronized MPMC throughput test")
   constexpr size_t _MSG_PER_CONSUMER_ = 1000000;
   constexpr size_t N = _MAX_PUBLISHERS_ * _MSG_PER_CONSUMER_;
 
-  using Queue = SPMCMulticastQueueReliable<OrderNonTrivial, _MAX_CONSUMERS_>;
+  using Queue = SPMCMulticastQueueReliableBounded<OrderNonTrivial, _MAX_CONSUMERS_>;
   Queue queue(_PUBLISHER_QUEUE_SIZE);
 
   size_t from = std::chrono::system_clock::now().time_since_epoch().count();
@@ -298,7 +298,7 @@ TEST_CASE("SingleThreaded MPMC throughput test")
   constexpr size_t _MSG_PER_CONSUMER_ = 10000000;
   constexpr size_t N = _MAX_PUBLISHERS_ * _MSG_PER_CONSUMER_;
 
-  using Queue = SPMCMulticastQueueReliable<OrderNonTrivial, _MAX_CONSUMERS_>;
+  using Queue = SPMCMulticastQueueReliableBounded<OrderNonTrivial, _MAX_CONSUMERS_>;
   std::list<Queue> queues;
   for (size_t i = 0; i < _MAX_PUBLISHERS_; ++i)
     queues.emplace_back(_PUBLISHER_QUEUE_SIZE);
@@ -398,7 +398,7 @@ TEST_CASE("SingleThreaded SPMC throughput test")
   constexpr size_t _MAX_CONSUMERS_ = 3;
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
   constexpr size_t N = 10000000;
-  using Queue = SPMCMulticastQueueReliable<OrderNonTrivial, _MAX_CONSUMERS_>;
+  using Queue = SPMCMulticastQueueReliableBounded<OrderNonTrivial, _MAX_CONSUMERS_>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
 
   size_t from = std::chrono::system_clock::now().time_since_epoch().count();
@@ -599,7 +599,7 @@ TEST_CASE("SingleThreaded Anycast MPMC throughput test")
   constexpr size_t _MSG_PER_CONSUMER_ = 10000000;
   constexpr size_t N = _MAX_PUBLISHERS_ * _MSG_PER_CONSUMER_;
 
-  using Queue = SPMCMulticastQueueReliable<OrderNonTrivial, _MAX_CONSUMERS_>;
+  using Queue = SPMCMulticastQueueReliableBounded<OrderNonTrivial, _MAX_CONSUMERS_>;
   std::list<Queue> queues;
   AnycastConsumerGroup<Queue> consumer_group;
   for (size_t i = 0; i < _MAX_PUBLISHERS_; ++i)

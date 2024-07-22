@@ -88,7 +88,7 @@ public:
 TEST_CASE("SPSC latency test")
 {
   size_t constexpr BATCH_NUM = 2;
-  using Queue = SPMCMulticastQueueReliable<int, 1, BATCH_NUM>;
+  using Queue = SPMCMulticastQueueReliableBounded<int, 1, BATCH_NUM>;
   uint64_t N = 10000;
 
   Queue A_queue(64);

@@ -48,7 +48,7 @@ public:
   ConsumerTicket attach_consumer(Consumer& c)
   {
     // we can have as many as consumers as possibliy can since the conflated queue does not specifically track consumers
-    return {0, 0 /*does not matter basically*/, std::numeric_limits<size_t>::max(),
+    return {0, 0 /*does not matter basically*/, std::numeric_limits<size_t>::max(), 0,
             ConsumerAttachReturnCode::Attached};
   }
 
@@ -86,7 +86,8 @@ public:
   }
 
   template <class C, class F>
-  ConsumeReturnCode consume_by_func(size_t idx, Node& node, size_t version, C& consumer, F&& f)
+  ConsumeReturnCode consume_by_func(size_t idx, size_t& queue_idx, Node& node, size_t version,
+                                    C& consumer, F&& f)
   {
     size_t& previous_version = consumer.previous_version_;
     if ((version & 1) == 0 && previous_version < version)
@@ -120,7 +121,7 @@ public:
   }
 
   template <class C>
-  ConsumeReturnCode skip(size_t idx, Node& node, size_t version, C& consumer)
+  ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node, size_t version, C& consumer)
   {
     size_t& previous_version = consumer.previous_version_;
     if ((version & 1) == 0 && previous_version < version)

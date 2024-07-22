@@ -84,3 +84,14 @@ class QueueStoppedExp : public std::exception
 class SlowConsumerExp : public std::exception
 {
 };
+
+template <size_t N>
+constexpr auto calc_power_of_two()
+{
+  std::array<size_t, N> result{1};
+  for (size_t i = 1; i < N; ++i)
+    result[i] = result[i - 1] * 2;
+  return result;
+}
+
+constexpr inline std::array<size_t, 64> POWER_OF_TWO = calc_power_of_two<64>();

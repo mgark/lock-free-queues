@@ -15,7 +15,6 @@
  */
 
 #include "detail/common.h"
-#include "detail/consumer.h"
 #include <assert.h>
 #include <mpmc.h>
 
@@ -28,34 +27,25 @@ struct Order
 
   friend std::ostream& operator<<(std::ostream& out, const Order& o)
   {
-    out << "id=" << o.id << " vol=" << o.vol << " price=" << o.price << " side=" << o.side << "\n";
+    out << "\n id=" << o.id << " vol=" << o.vol << " price=" << o.price << " side=" << o.side << "\n";
     return out;
   }
 };
 
 int main()
 {
-  using Queue = SPMCMulticastQueueReliableBounded<Order, 1>;
-  Queue q(8);
+  using Queue = SPMCMulticastQueueReliableAdaptiveBounded<Order, 2, 2>;
+  Queue q(2, 4);
 
   constexpr bool blocking = true;
-  ConsumerBlocking<Queue> c(q);
+  ConsumerBlocking<Queue> c1(q);
+  ConsumerBlocking<Queue> c2(q);
   ProducerBlocking<Queue> p(q);
   q.start();
 
   p.emplace(1u, 1u, 100.0, 'A');
-  p.emplace(2u, 1u, 100.0, 'A');
-  p.emplace(3u, 1u, 100.0, 'A');
-
-  const_consumer_iterator<ConsumerBlocking<Queue>> it = c.cbegin();
-  int i = 1;
-  while (it != c.cend())
-  {
-    std::cout << *it;
-    if (i++ == 3)
-      q.stop(); // this would mark the end for the next increment
-    ++it;
-  }
+  c1.consume([&q](const Order& o) mutable { std::cout << o; });
+  c2.consume([&q](const Order& o) mutable { std::cout << o; });
 
   return 0;
 }

@@ -133,7 +133,7 @@ TEST_CASE("SPMC queue stress test to detect race conditions")
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 32;
   constexpr size_t N = 30000000;
   constexpr size_t BATCH_NUM = 2;
-  using Queue = SPMCMulticastQueueReliable<Vector, _MAX_CONSUMERS_, BATCH_NUM>;
+  using Queue = SPMCMulticastQueueReliableBounded<Vector, _MAX_CONSUMERS_, BATCH_NUM>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
 
   size_t from;
@@ -226,7 +226,7 @@ TEST_CASE("SPMC Synchronized queue stress test to detect race conditions")
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 16;
   constexpr size_t N = 3000000;
   constexpr size_t BATCH_NUM = 2;
-  using Queue = SPMCMulticastQueueReliable<Vector, _MAX_CONSUMERS_, BATCH_NUM>;
+  using Queue = SPMCMulticastQueueReliableBounded<Vector, _MAX_CONSUMERS_, BATCH_NUM>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
 
   size_t from;

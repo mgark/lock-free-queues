@@ -25,7 +25,7 @@ TEST_CASE("SPSC consumer iterator functional test")
 {
   SECTION("Blocking consumer")
   {
-    using Queue = SPMCMulticastQueueReliable<Order, 1>;
+    using Queue = SPMCMulticastQueueReliableBounded<Order, 1>;
     Queue q(8);
 
     constexpr bool blocking = true;
@@ -60,7 +60,7 @@ TEST_CASE("SPSC consumer iterator functional test")
 
   SECTION("Non-Blocking consumer")
   {
-    using Queue = SPMCMulticastQueueReliable<Order, 1>;
+    using Queue = SPMCMulticastQueueReliableBounded<Order, 1>;
     Queue q(8);
 
     constexpr bool blocking = true;
