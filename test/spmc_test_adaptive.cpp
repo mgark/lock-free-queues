@@ -37,18 +37,32 @@ TEST_CASE("SPMC Adaptive functional test")
   CHECK(q.capacity() == 6);
   CHECK(q.max_queue_num() == 2);
 
-  // Producer
   {
     for (size_t i = 1; i <= 6; ++i)
     {
       CHECK(ProduceReturnCode::Published == p.emplace(i, i, 100.0, 'A'));
-      std::cout << "pushed i=" << i << "\n";
     }
   }
 
-  // Consumer
   {
     for (size_t i = 1; i <= 6; ++i)
+    {
+      CHECK(ConsumeReturnCode::Consumed ==
+            c1.consume([&q, i](const Order& o) mutable { CHECK(o.id == i); }));
+      CHECK(ConsumeReturnCode::Consumed ==
+            c2.consume([&q, i](const Order& o) mutable { CHECK(o.id == i); }));
+    }
+  }
+
+  {
+    for (size_t i = 1; i <= 4; ++i)
+    {
+      CHECK(ProduceReturnCode::Published == p.emplace(i, i, 100.0, 'A'));
+    }
+  }
+
+  {
+    for (size_t i = 1; i <= 4; ++i)
     {
       CHECK(ConsumeReturnCode::Consumed ==
             c1.consume([&q, i](const Order& o) mutable { CHECK(o.id == i); }));

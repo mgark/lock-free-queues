@@ -228,7 +228,7 @@ public:
 
       producer.cache_min_next_consumer_idx(min_next_consumer_idx_local);
       first_time_publish = min_next_consumer_idx == CONSUMER_IS_WELCOME;
-      no_free_slot = !first_time_publish && (original_idx - min_next_consumer_idx >= this->current_sz_);
+      no_free_slot = !first_time_publish && (original_idx - min_next_consumer_idx_local >= this->current_sz_);
 
       if (!is_running())
       {
@@ -287,8 +287,6 @@ public:
       { // need to
         // rollover
         consumer.previous_version_ = version;
-        if (consumer.n_ != consumer.orig_n_)
-          consumer.n_ = consumer.orig_n_;
       }
 
       ++consumer.consumer_next_idx_;
@@ -324,8 +322,6 @@ public:
       { // need to
         // rollover
         consumer.previous_version_ = version;
-        if (consumer.n_ != consumer.orig_n_)
-          consumer.n_ = consumer.orig_n_;
       }
 
       ++consumer.consumer_next_idx_;
