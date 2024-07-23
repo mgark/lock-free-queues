@@ -287,6 +287,8 @@ public:
       { // need to
         // rollover
         consumer.previous_version_ = version;
+        if (consumer.n_ != consumer.orig_n_)
+          consumer.n_ = consumer.orig_n_;
       }
 
       ++consumer.consumer_next_idx_;
@@ -322,6 +324,8 @@ public:
       { // need to
         // rollover
         consumer.previous_version_ = version;
+        if (consumer.n_ != consumer.orig_n_)
+          consumer.n_ = consumer.orig_n_;
       }
 
       ++consumer.consumer_next_idx_;

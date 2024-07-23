@@ -27,7 +27,7 @@ struct Order
 
   friend std::ostream& operator<<(std::ostream& out, const Order& o)
   {
-    out << "id=" << o.id << " vol=" << o.vol << " price=" << o.price << " side=" << o.side << "\n";
+    out << "\n id=" << o.id << " vol=" << o.vol << " price=" << o.price << " side=" << o.side << "\n";
     return out;
   }
 };

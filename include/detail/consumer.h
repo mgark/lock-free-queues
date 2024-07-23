@@ -35,6 +35,7 @@ class alignas(64) ConsumerBase
 protected:
   Queue* q_;
   size_t n_;
+  size_t orig_n_;
   size_t consumer_next_idx_;
   size_t previous_version_;
   size_t idx_mask_;
@@ -83,11 +84,11 @@ public:
 
   void increment_queue_idx(size_t queue_sz, size_t batch_sz)
   {
-    n_ = queue_sz;
-    idx_mask_ = n_ - 1;
+    orig_n_ = queue_sz;
+    idx_mask_ = queue_sz - 1;
     items_per_batch_ = batch_sz;
-    // next_checkout_point_idx_ = items_per_batch_ + (consumer_next_idx_ - consumer_next_idx_ % items_per_batch_);
-    next_checkout_point_idx_ = consumer_next_idx_ & idx_mask_;
+    next_checkout_point_idx_ = items_per_batch_ + (consumer_next_idx_ - consumer_next_idx_ % items_per_batch_);
+    n_ = consumer_next_idx_ & idx_mask_; // need to adjust n_!!!!
     previous_version_ = 0;
     ++queue_idx_;
   }

@@ -9,13 +9,13 @@
             "type": "lldb",
             "request": "launch",
             "program": "${workspaceFolder}/build/example/${buildType}/${fileBasenameNoExtension}",
-            "cwd": "${workspaceFolder}/build/${buildTyp}/example",
+            "cwd": "${workspaceFolder}/build/${buildType}/example",
         },
         {
             "name": "cpp",
             "request": "launch",
             "program": "${workspaceFolder}/build/example/${buildType}/${fileBasenameNoExtension}",
-            "cwd": "${workspaceFolder}/build/${buildTyp}/example",
+            "cwd": "${workspaceFolder}/build/${buildType}/example",
         }
     ]
 }
