@@ -28,6 +28,7 @@ class SPMCMulticastQueueReliableBounded
   struct alignas(64) ConsumerProgress
   {
     std::atomic<size_t> idx;
+    std::atomic<size_t> previous_version;
     std::atomic<size_t> queue_idx;
   };
 
@@ -84,6 +85,7 @@ public:
             {
               // if the queue has not started, then let's assign the next read idx by ourselves!
               this->consumers_progress_.at(i).idx.store(0, std::memory_order_release);
+              this->consumers_progress_.at(i).previous_version.store(0, std::memory_order_release);
               producer_need_to_accept = false;
             }
           }
@@ -104,25 +106,33 @@ public:
           // shall start safely consuming
           size_t stopped;
           size_t consumer_next_idx;
+          size_t previous_version;
           do
           {
             stopped = is_stopped();
-            consumer_next_idx = this->consumers_progress_.at(i).idx.load(std::memory_order_relaxed);
+            consumer_next_idx = this->consumers_progress_.at(i).idx.load(std::memory_order_acquire);
+            previous_version = this->consumers_progress_.at(i).previous_version.load(std::memory_order_relaxed);
           } while (!stopped && consumer_next_idx >= CONSUMER_JOIN_INPROGRESS);
 
           if (stopped)
           {
             detach_consumer(i);
-            return {0, CONSUMER_IS_WELCOME, this->items_per_batch_, 0, ConsumerAttachReturnCode::Stopped};
+            return {0,
+                    0,
+                    CONSUMER_IS_WELCOME,
+                    this->items_per_batch_,
+                    0,
+                    0,
+                    ConsumerAttachReturnCode::Stopped};
           }
 
-          return {i, consumer_next_idx, this->items_per_batch_, 0, ConsumerAttachReturnCode::Attached};
+          return {this->size(), i, consumer_next_idx, this->items_per_batch_, 0, previous_version, ConsumerAttachReturnCode::Attached};
         } // else someone stole the locker just before us!
       }
     }
 
     // not enough space for the new consumer!
-    return {0, CONSUMER_IS_WELCOME, this->items_per_batch_, 0, ConsumerAttachReturnCode::ConsumerLimitReached};
+    return {0, 0, CONSUMER_IS_WELCOME, this->items_per_batch_, 0, 0, ConsumerAttachReturnCode::ConsumerLimitReached};
   }
 
   bool detach_consumer(size_t consumer_id)
@@ -169,7 +179,7 @@ public:
     return false;
   }
 
-  size_t try_accept_new_consumer(size_t i, size_t original_idx)
+  size_t try_accept_new_consumer(size_t i, size_t original_idx, size_t previous_version)
   {
     size_t consumer_next_idx = this->consumers_progress_[i].idx.load(std::memory_order_relaxed);
     if (CONSUMER_JOIN_REQUESTED == consumer_next_idx)
@@ -179,8 +189,8 @@ public:
             consumer_next_idx, CONSUMER_JOIN_INPROGRESS, std::memory_order_relaxed, std::memory_order_relaxed))
       {
         consumer_next_idx = original_idx;
-        this->consumers_progress_[i].idx.store(
-          consumer_next_idx, std::memory_order_relaxed); // TODO: fix bug as consumer_next_idx points to the slot which has not yet been populated by the producer!
+        this->consumers_progress_[i].previous_version.store(previous_version, std::memory_order_relaxed);
+        this->consumers_progress_[i].idx.store(consumer_next_idx, std::memory_order_release);
         this->consumers_pending_attach_.fetch_sub(1, std::memory_order_release);
       }
     }
@@ -195,7 +205,10 @@ public:
       return ProduceReturnCode::NotRunning;
     }
 
-    int i = 0;
+    size_t idx = original_idx & this->idx_mask_;
+    Node& node = this->nodes_[idx];
+    size_t version = node.version_.load(std::memory_order_relaxed);
+
     size_t min_next_consumer_idx = producer.get_min_next_consumer_idx_cached();
     bool first_time_publish = min_next_consumer_idx == CONSUMER_IS_WELCOME;
     bool no_free_slot = first_time_publish || (original_idx - min_next_consumer_idx >= this->n_);
@@ -205,7 +218,7 @@ public:
       auto max_consumer_id = this->max_consumer_id_.load(std::memory_order_acquire);
       for (size_t i = 1; i <= max_consumer_id; ++i)
       {
-        size_t consumer_next_idx = try_accept_new_consumer(i, original_idx);
+        size_t consumer_next_idx = try_accept_new_consumer(i, original_idx, version);
         if (consumer_next_idx < CONSUMER_JOIN_INPROGRESS)
         {
           min_next_consumer_idx_local = std::min(min_next_consumer_idx_local, consumer_next_idx);
@@ -229,10 +242,6 @@ public:
         }
       }
     }
-
-    size_t idx = original_idx & this->idx_mask_;
-    Node& node = this->nodes_[idx];
-    size_t version = node.version_.load(std::memory_order_relaxed);
 
     void* storage = node.storage_;
     if constexpr (!std::is_trivially_destructible_v<T>)

@@ -30,10 +30,12 @@ public:
 
   struct ConsumerTicket
   {
+    size_t n;
     size_t consumer_id;
     size_t consumer_next_idx;
     size_t items_per_batch;
     size_t queue_idx;
+    size_t previous_version;
     ConsumerAttachReturnCode ret_code;
   };
 
@@ -116,9 +118,12 @@ public:
 
     for (size_t queue_idx = 0; queue_idx < nodes_.size(); ++queue_idx)
     {
+      if (nodes_[queue_idx] == nullptr)
+        continue;
+
       if constexpr (!std::is_trivially_destructible_v<T>)
       {
-        for (size_t i = 0; i < nodes_[queue_idx].size(); ++i)
+        for (size_t i = 0; i < this->initial_sz_ * POWER_OF_TWO[queue_idx]; ++i)
         {
           Node& node = this->nodes_[queue_idx][i];
           void* storage = node.storage_;
@@ -130,7 +135,7 @@ public:
         }
       }
 
-      NodeAllocTraits::deallocate(alloc_, nodes_[queue_idx], initial_sz_ * (queue_idx + 1));
+      NodeAllocTraits::deallocate(alloc_, nodes_[queue_idx], initial_sz_ * POWER_OF_TWO[queue_idx]);
     }
   }
 
@@ -147,13 +152,13 @@ public:
 
   size_t max_queue_num() const { return max_queue_num_; }
 
-  size_t increment_queue_size()
+  void increment_queue_size(size_t new_sz)
   {
-    current_sz_ *= 2;
+    current_sz_ = new_sz;
     idx_mask_ = current_sz_ - 1;
+    items_per_batch_ = current_sz_ / _BATCH_NUM_;
     size_t new_idx = 1 + this->back_buffer_idx_.load(std::memory_order_acquire);
     this->back_buffer_idx_.store(new_idx, std::memory_order_release);
-    return new_idx;
   }
 
   void start()
@@ -259,8 +264,9 @@ public:
   }
 
   template <class C, class F>
-  ConsumeReturnCode consume_non_blocking(size_t idx, size_t& queue_idx, C& consumer, F&& f)
+  ConsumeReturnCode consume_non_blocking(size_t& queue_idx, C& consumer, F&& f)
   {
+    size_t idx = consumer.consumer_next_idx_ & consumer.idx_mask_;
     Node& node = this->nodes_[queue_idx][idx];
     size_t prev_queue_idx = queue_idx;
     size_t version = node.version_.load(std::memory_order_acquire);

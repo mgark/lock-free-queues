@@ -21,10 +21,10 @@
 #include <catch2/catch_all.hpp>
 #include <mpmc.h>
 
-TEST_CASE("SPMC Adaptive functional test - blocking producer and consumer")
+TEST_CASE("SPMC Conflated basic functional test - blocking producer and consumer")
 {
-  using Queue = SPMCMulticastQueueReliableAdaptiveBounded<Order, 2, 2>;
-  Queue q(2, 8);
+  using Queue = SPMCMulticastQueueUnreliable<Order, 2, 2>;
+  Queue q(2);
 
   constexpr bool blocking = true;
   ConsumerBlocking<Queue> c1;
@@ -34,27 +34,8 @@ TEST_CASE("SPMC Adaptive functional test - blocking producer and consumer")
   CHECK(ConsumerAttachReturnCode::Attached == c2.attach(q));
   q.start();
 
-  CHECK(q.capacity() == 6);
-  CHECK(q.max_queue_num() == 2);
-
   {
-    for (size_t i = 1; i <= 6; ++i)
-    {
-      CHECK(ProduceReturnCode::Published == p.emplace(i, i, 100.0, 'A'));
-    }
-  }
-
-  {
-    for (size_t i = 1; i <= 6; ++i)
-    {
-      CHECK(ConsumeReturnCode::Consumed ==
-            c1.consume([&q, i](const Order& o) mutable { CHECK(o.id == i); }));
-      CHECK(ConsumeReturnCode::Consumed ==
-            c2.consume([&q, i](const Order& o) mutable { CHECK(o.id == i); }));
-    }
-  }
-
-  {
+    // queue has max 2 times so that first two items would be overriden by subsequent two published values
     for (size_t i = 1; i <= 4; ++i)
     {
       CHECK(ProduceReturnCode::Published == p.emplace(i, i, 100.0, 'A'));
@@ -62,7 +43,7 @@ TEST_CASE("SPMC Adaptive functional test - blocking producer and consumer")
   }
 
   {
-    for (size_t i = 1; i <= 4; ++i)
+    for (size_t i = 3; i <= 4; ++i)
     {
       CHECK(ConsumeReturnCode::Consumed ==
             c1.consume([&q, i](const Order& o) mutable { CHECK(o.id == i); }));
@@ -72,10 +53,10 @@ TEST_CASE("SPMC Adaptive functional test - blocking producer and consumer")
   }
 }
 
-TEST_CASE("SPMC Adaptive functional test - NON blocking producer and consumer")
+TEST_CASE("SPMC Conflated basic functional test - NON blocking producer and consumer")
 {
-  using Queue = SPMCMulticastQueueReliableAdaptiveBounded<Order, 2, 2>;
-  Queue q(2, 8);
+  using Queue = SPMCMulticastQueueUnreliable<Order, 2, 2>;
+  Queue q(2);
 
   constexpr bool blocking = true;
   ConsumerNonBlocking<Queue> c1;
@@ -85,57 +66,22 @@ TEST_CASE("SPMC Adaptive functional test - NON blocking producer and consumer")
   CHECK(ConsumerAttachReturnCode::Attached == c2.attach(q));
   q.start();
 
-  CHECK(q.capacity() == 6);
-  CHECK(q.max_queue_num() == 2);
-
-  {
-    size_t i = 1;
-    for (; i <= 6; ++i)
-    {
-      CHECK(ProduceReturnCode::Published == p.emplace(i, i, 100.0, 'A'));
-    }
-
-    CHECK(ProduceReturnCode::TryAgain == p.emplace(i, i, 100.0, 'A'));
-  }
-
-  {
-    for (size_t i = 1; i <= 6; ++i)
-    {
-      CHECK(ConsumeReturnCode::Consumed ==
-            c1.consume([&q, i](const Order& o) mutable { CHECK(o.id == i); }));
-      CHECK(ConsumeReturnCode::Consumed ==
-            c2.consume([&q, i](const Order& o) mutable { CHECK(o.id == i); }));
-    }
-  }
-
-  {
-    size_t i = 1;
-    for (; i <= 4; ++i)
-    {
-      CHECK(ProduceReturnCode::Published == p.emplace(i, i, 100.0, 'A'));
-    }
-
-    CHECK(ProduceReturnCode::TryAgain == p.emplace(i, i, 100.0, 'A'));
-  }
-
   {
     for (size_t i = 1; i <= 4; ++i)
     {
+      CHECK(ProduceReturnCode::Published == p.emplace(i, i, 100.0, 'A'));
+    }
+  }
+
+  {
+    for (size_t i = 3; i <= 4; ++i)
+    {
       CHECK(ConsumeReturnCode::Consumed ==
             c1.consume([&q, i](const Order& o) mutable { CHECK(o.id == i); }));
       CHECK(ConsumeReturnCode::Consumed ==
             c2.consume([&q, i](const Order& o) mutable { CHECK(o.id == i); }));
     }
   }
-
-  {
-    size_t i = 1;
-    for (; i <= 4; ++i)
-    {
-      CHECK(ProduceReturnCode::Published == p.emplace(i, i, 100.0, 'A'));
-    }
-
-    CHECK(ProduceReturnCode::TryAgain == p.emplace(i, i, 100.0, 'A'));
-  }
 }
+
 int main(int argc, char** argv) { return Catch::Session().run(argc, argv); }

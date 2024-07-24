@@ -89,7 +89,6 @@ public:
     items_per_batch_ = batch_sz;
     next_checkout_point_idx_ = items_per_batch_ + (consumer_next_idx_ - consumer_next_idx_ % items_per_batch_);
     n_ = consumer_next_idx_ & idx_mask_; // need to adjust n_!!!!
-    previous_version_ = 0;
     ++queue_idx_;
   }
 
@@ -104,7 +103,7 @@ protected:
     auto ticket = q->attach_consumer(*this);
     if (ticket.ret_code == ConsumerAttachReturnCode::Attached)
     {
-      n_ = q->size();
+      n_ = ticket.n;
       idx_mask_ = n_ - 1;
 
       q_ = q;
@@ -120,7 +119,7 @@ protected:
           (consumer_next_idx_ - ticket.consumer_next_idx % ticket.items_per_batch);
       }
 
-      previous_version_ = consumer_next_idx_ / n_;
+      previous_version_ = ticket.previous_version; // it will be properly recalculated later on by consumers!
     }
 
     return ticket.ret_code;

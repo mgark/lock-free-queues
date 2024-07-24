@@ -48,8 +48,7 @@ public:
   ConsumerTicket attach_consumer(Consumer& c)
   {
     // we can have as many as consumers as possibliy can since the conflated queue does not specifically track consumers
-    return {0, 0 /*does not matter basically*/, std::numeric_limits<size_t>::max(), 0,
-            ConsumerAttachReturnCode::Attached};
+    return {this->size(), 0, 0 /*does not matter basically*/, std::numeric_limits<size_t>::max(), 0, 0, ConsumerAttachReturnCode::Attached};
   }
 
   /*

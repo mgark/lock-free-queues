@@ -22,6 +22,8 @@
 #include "spmc_queue_base_adaptive.h"
 #include <atomic>
 #include <cstdlib>
+#include <math.h>
+#include <memory>
 
 template <class T, size_t _MAX_CONSUMER_N_ = 8, size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>>
 class SPMCMulticastQueueReliableAdaptiveBounded
@@ -31,6 +33,7 @@ class SPMCMulticastQueueReliableAdaptiveBounded
   struct alignas(64) ConsumerProgress
   {
     std::atomic<size_t> idx;
+    std::atomic<size_t> previous_version;
     std::atomic<size_t> queue_idx;
   };
 
@@ -43,6 +46,7 @@ class SPMCMulticastQueueReliableAdaptiveBounded
   // these variables change somewhat infrequently
   alignas(64) std::atomic<int> consumers_pending_attach_;
   std::atomic<size_t> max_consumer_id_;
+  std::atomic<size_t> prev_version_;
 
 public:
   using Base =
@@ -89,6 +93,7 @@ public:
               // if the queue has not started, then let's assign the next read idx by ourselves!
               auto queue_idx = this->back_buffer_idx_.load(std::memory_order_acquire);
               this->consumers_progress_.at(i).idx.store(0, std::memory_order_release);
+              this->consumers_progress_.at(i).previous_version.store(0, std::memory_order_release);
               this->consumers_progress_.at(i).queue_idx.store(queue_idx, std::memory_order_release);
               producer_need_to_accept = false;
             }
@@ -111,27 +116,30 @@ public:
           size_t stopped;
           size_t consumer_next_idx;
           size_t consumer_queue_idx;
+          size_t previous_version;
           do
           {
             stopped = is_stopped();
             consumer_next_idx = this->consumers_progress_.at(i).idx.load(std::memory_order_acquire);
-            consumer_queue_idx = this->consumers_progress_.at(i).queue_idx.load(std::memory_order_acquire);
+            previous_version = this->consumers_progress_.at(i).previous_version.load(std::memory_order_relaxed);
+            consumer_queue_idx = this->consumers_progress_.at(i).queue_idx.load(std::memory_order_relaxed);
           } while (!stopped && consumer_next_idx >= CONSUMER_JOIN_INPROGRESS);
 
           if (stopped)
           {
             detach_consumer(i);
-            return {0, CONSUMER_IS_WELCOME, this->items_per_batch_, 0, ConsumerAttachReturnCode::Stopped};
+            return {0, 0, CONSUMER_IS_WELCOME, 0 /*nodes per batch does not matter*/, 0, 0, ConsumerAttachReturnCode::Stopped};
           }
 
-          return {i, consumer_next_idx, this->items_per_batch_, consumer_queue_idx,
-                  ConsumerAttachReturnCode::Attached};
+          size_t queue_sz = this->initial_sz_ * POWER_OF_TWO[consumer_queue_idx];
+          size_t items_per_batch = queue_sz / _BATCH_NUM_;
+          return {queue_sz, i, consumer_next_idx, items_per_batch, consumer_queue_idx, previous_version, ConsumerAttachReturnCode::Attached};
         } // else someone stole the locker just before us!
       }
     }
 
     // not enough space for the new consumer!
-    return {0, CONSUMER_IS_WELCOME, this->items_per_batch_, 0, ConsumerAttachReturnCode::ConsumerLimitReached};
+    return {0, 0, CONSUMER_IS_WELCOME, 0 /*nodes per batch does not matter*/, 0, 0, ConsumerAttachReturnCode::ConsumerLimitReached};
   }
 
   bool detach_consumer(size_t consumer_id)
@@ -178,7 +186,7 @@ public:
     return false;
   }
 
-  size_t try_accept_new_consumer(size_t i, size_t original_idx)
+  size_t try_accept_new_consumer(size_t i, size_t original_idx, size_t previous_version)
   {
     size_t consumer_next_idx = this->consumers_progress_[i].idx.load(std::memory_order_relaxed);
     if (CONSUMER_JOIN_REQUESTED == consumer_next_idx)
@@ -189,6 +197,7 @@ public:
       {
         consumer_next_idx = original_idx;
         size_t queue_idx = this->back_buffer_idx_.load(std::memory_order_acquire);
+        this->consumers_progress_[i].previous_version.store(previous_version, std::memory_order_relaxed);
         this->consumers_progress_[i].queue_idx.store(queue_idx, std::memory_order_relaxed);
         this->consumers_progress_[i].idx.store(consumer_next_idx, std::memory_order_release);
         this->consumers_pending_attach_.fetch_sub(1, std::memory_order_release);
@@ -211,15 +220,17 @@ public:
     size_t back_buffer_idx = this->back_buffer_idx_.load(std::memory_order_acquire);
     bool first_time_publish = min_next_consumer_idx == CONSUMER_IS_WELCOME;
     Node& current_node = this->nodes_[back_buffer_idx][idx];
+    size_t version = current_node.version_;
+    bool free_node = (back_buffer_idx > 0 && this->nodes_[back_buffer_idx - 1][0].version_ == version); // TODO: rework!
     bool no_free_slot = first_time_publish ||
-      (original_idx - min_next_consumer_idx >= this->current_sz_ && current_node.version_ != 0);
+      (original_idx - min_next_consumer_idx >= this->current_sz_ && !free_node);
     while (no_free_slot || this->consumers_pending_attach_.load(std::memory_order_acquire))
     {
       size_t min_next_consumer_idx_local = CONSUMER_IS_WELCOME;
       auto max_consumer_id = this->max_consumer_id_.load(std::memory_order_acquire);
       for (size_t i = 1; i <= max_consumer_id; ++i)
       {
-        size_t consumer_next_idx = try_accept_new_consumer(i, original_idx);
+        size_t consumer_next_idx = try_accept_new_consumer(i, original_idx, version);
         if (consumer_next_idx < CONSUMER_JOIN_INPROGRESS)
         {
           min_next_consumer_idx_local = std::min(min_next_consumer_idx_local, consumer_next_idx);
@@ -228,7 +239,8 @@ public:
 
       producer.cache_min_next_consumer_idx(min_next_consumer_idx_local);
       first_time_publish = min_next_consumer_idx == CONSUMER_IS_WELCOME;
-      no_free_slot = !first_time_publish && (original_idx - min_next_consumer_idx_local >= this->current_sz_);
+      no_free_slot = !first_time_publish &&
+        (original_idx - min_next_consumer_idx_local >= this->current_sz_) && !free_node;
 
       if (!is_running())
       {
@@ -239,7 +251,7 @@ public:
       {
         // let's add another queue to the list with twice the size!
         // back_buffer_idx = this->back_buffer_idx_.load(std::memory_order_acquire);
-        if (back_buffer_idx + 1 == this->max_queue_num_)
+        if (back_buffer_idx + 1 >= this->max_queue_num_)
         {
           if constexpr (!blocking)
           {
@@ -248,11 +260,16 @@ public:
         }
         else
         {
-          back_buffer_idx = this->increment_queue_size();
-          this->nodes_[back_buffer_idx] =
-            std::allocator_traits<typename Base::NodeAllocator>::allocate(this->alloc_, this->current_sz_);
-          std::uninitialized_default_construct(this->nodes_[back_buffer_idx],
-                                               this->nodes_[back_buffer_idx] + this->current_sz_);
+          size_t new_sz = this->current_sz_ * 2;
+          this->nodes_[++back_buffer_idx] =
+            std::allocator_traits<typename Base::NodeAllocator>::allocate(this->alloc_, new_sz);
+          std::uninitialized_value_construct_n(this->nodes_[back_buffer_idx], new_sz);
+
+          // now it is super important to continue previous version in the new queue
+          for (Node* node = this->nodes_[back_buffer_idx]; node != this->nodes_[back_buffer_idx] + new_sz; ++node)
+            node->version_ = version;
+
+          this->increment_queue_size(new_sz); // now we make new producer queue visible to the consumers!
           idx = original_idx & this->idx_mask_; // index needs to be re-adjusted as the mask changed!
           break;
         }
@@ -260,8 +277,6 @@ public:
     }
 
     Node& node = this->nodes_[back_buffer_idx][idx];
-    size_t version = node.version_.load(std::memory_order_relaxed);
-
     void* storage = node.storage_;
     if constexpr (!std::is_trivially_destructible_v<T>)
     {

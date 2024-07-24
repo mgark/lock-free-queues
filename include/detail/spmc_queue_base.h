@@ -30,10 +30,12 @@ public:
 
   struct ConsumerTicket
   {
+    size_t n;
     size_t consumer_id;
     size_t consumer_next_idx;
     size_t items_per_batch;
     size_t queue_idx;
+    size_t previous_version;
     ConsumerAttachReturnCode ret_code;
   };
 
