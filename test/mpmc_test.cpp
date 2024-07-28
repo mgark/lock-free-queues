@@ -181,4 +181,36 @@ TEST_CASE("MPMC Anycasy Non-Blocking consumer functional test")
   }
 }
 
+TEST_CASE("Multi-threaded MPMC functional test")
+{
+  using Queue = SPMCMulticastQueueReliableBounded<Order, 2>;
+  Queue q1(8);
+
+  constexpr bool blocking = true;
+  ConsumerBlocking<Queue> c1 = {q1};
+  ConsumerBlocking<Queue> c2 = {q1};
+
+  ProducerSynchronizedContext producer_group;
+  ProducerBlocking<Queue, ProducerKind::Synchronized> p1(q1, producer_group);
+  ProducerBlocking<Queue, ProducerKind::Synchronized> p2(q1, producer_group);
+
+  q1.start();
+  {
+    auto r = p1.emplace(1u, 1u, 100.0, 'A');
+    CHECK(ProduceReturnCode::Published == r);
+    r = p2.emplace(2u, 2u, 100.0, 'A');
+    CHECK(ProduceReturnCode::Published == r);
+  }
+  {
+    auto r = c1.consume([](const Order& o) { std::cout << o; });
+    CHECK(ConsumeReturnCode::Consumed == r);
+    r = c2.consume([](const Order& o) { std::cout << o; });
+    CHECK(ConsumeReturnCode::Consumed == r);
+    r = c2.consume([](const Order& o) { std::cout << o; });
+    CHECK(ConsumeReturnCode::Consumed == r);
+    r = c1.consume([](const Order& o) { std::cout << o; });
+    CHECK(ConsumeReturnCode::Consumed == r);
+  }
+}
+
 int main(int argc, char** argv) { return Catch::Session().run(argc, argv); }

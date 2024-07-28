@@ -64,28 +64,11 @@ protected:
 
 public:
   SPMCMulticastQueueBase(std::size_t N, const Allocator& alloc = Allocator())
-    : n_(N),
-      items_per_batch_(n_ / _BATCH_NUM_),
-      idx_mask_(n_ - 1),
-      max_outstanding_non_consumed_items_((_BATCH_NUM_ - 1) * items_per_batch_),
-      alloc_(alloc)
+    : n_(N), items_per_batch_(n_ / _BATCH_NUM_), idx_mask_(n_ - 1), alloc_(alloc)
   {
     if ((N & (N - 1)) != 0)
     {
       throw std::runtime_error("N is not power of two");
-    }
-
-    if (max_outstanding_non_consumed_items_ + items_per_batch_ != n_)
-    {
-
-      throw std::runtime_error(std::string("max_outstanding_non_consumed_items_[")
-                                 .append(std::to_string(max_outstanding_non_consumed_items_))
-                                 .append("] ")
-                                 .append("is NOT equal n_[")
-                                 .append(std::to_string(n_))
-                                 .append("] items_per_batch [")
-                                 .append(std::to_string(items_per_batch_))
-                                 .append("]"));
     }
 
     if ((items_per_batch_ & (items_per_batch_ - 1)) != 0)

@@ -197,7 +197,7 @@ public:
       {
         consumer_next_idx = original_idx;
         size_t queue_idx = this->back_buffer_idx_.load(std::memory_order_acquire);
-        this->consumers_progress_[i].previous_version.store(previous_version, std::memory_order_relaxed);
+        this->consumers_progress_[i].previous_version.store(previous_version, std::memory_order_relaxed); // WARNING! this would only work for single threaded publishers!
         this->consumers_progress_[i].queue_idx.store(queue_idx, std::memory_order_relaxed);
         this->consumers_progress_[i].idx.store(consumer_next_idx, std::memory_order_release);
         this->consumers_pending_attach_.fetch_sub(1, std::memory_order_release);
@@ -220,8 +220,10 @@ public:
     size_t back_buffer_idx = this->back_buffer_idx_.load(std::memory_order_acquire);
     bool first_time_publish = min_next_consumer_idx == CONSUMER_IS_WELCOME;
     Node& current_node = this->nodes_[back_buffer_idx][idx];
-    size_t version = current_node.version_;
-    bool free_node = (back_buffer_idx > 0 && this->nodes_[back_buffer_idx - 1][0].version_ == version); // TODO: rework!
+    size_t version = current_node.version_.load(std::memory_order_acquire); // be carefull not gonna work with syncnronized producers!
+    bool free_node =
+      (back_buffer_idx > 0 &&
+       this->nodes_[back_buffer_idx - 1][0].version_.load(std::memory_order_acquire) == version); // TODO: rework!
     bool no_free_slot = first_time_publish ||
       (original_idx - min_next_consumer_idx >= this->current_sz_ && !free_node);
     while (no_free_slot || this->consumers_pending_attach_.load(std::memory_order_acquire))
@@ -255,7 +257,7 @@ public:
         {
           if constexpr (!blocking)
           {
-            return ProduceReturnCode::TryAgain;
+            return ProduceReturnCode::SlowConsumer;
           }
         }
         else
@@ -308,7 +310,7 @@ public:
       if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
       {
         this->consumers_progress_[consumer.consumer_id_].idx.store(consumer.consumer_next_idx_,
-                                                                   std::memory_order_relaxed);
+                                                                   std::memory_order_release);
         consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + consumer.items_per_batch_;
       }
 
@@ -343,7 +345,7 @@ public:
       if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
       {
         this->consumers_progress_[consumer.consumer_id_].idx.store(consumer.consumer_next_idx_,
-                                                                   std::memory_order_relaxed);
+                                                                   std::memory_order_release);
         consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + consumer.items_per_batch_;
       }
       return ConsumeReturnCode::Consumed;

@@ -32,6 +32,7 @@ struct alignas(64) ProducerSynchronizedContext
     min_next_consumer_idx_.store(CONSUMER_IS_WELCOME, std::memory_order_release);
   }
 
+  // size_t min_producer_idx_cached() const { return producer_idx_; }
   size_t get_min_next_consumer_idx_cached() const
   {
     return min_next_consumer_idx_.load(std::memory_order_acquire);
@@ -42,7 +43,8 @@ struct alignas(64) ProducerSynchronizedContext
     min_next_consumer_idx_.store(idx, std::memory_order_release);
   }
 
-  size_t aquire_idx() { return producer_idx_.fetch_add(1, std::memory_order_acquire); }
+  size_t aquire_idx() { return producer_idx_.fetch_add(1, std::memory_order_release); }
+  void release_idx() { producer_idx_.fetch_sub(1, std::memory_order_release); }
 };
 
 struct alignas(64) ProducerSingleThreadedContext
@@ -52,6 +54,8 @@ struct alignas(64) ProducerSingleThreadedContext
 
   size_t get_min_next_consumer_idx_cached() const { return min_next_consumer_idx_; }
   void cache_min_next_consumer_idx(size_t idx) { min_next_consumer_idx_ = idx; }
+
+  size_t min_producer_idx_cached() const { return producer_idx_; }
 
   size_t aquire_idx()
   {
@@ -74,6 +78,8 @@ protected:
   size_t last_producer_idx_{0};
 
 public:
+  static constexpr auto producer_kind = producerKind;
+
   ProducerBase() = default;
   ProducerBase(Queue& q) requires(producerKind == ProducerKind::SingleThreaded) { attach(q); }
   ProducerBase(Queue& q, ProducerSynchronizedContext& ctx) requires(producerKind == ProducerKind::Synchronized)
@@ -106,6 +112,7 @@ public:
   {
     if (q_)
     {
+      // TODO: need properly implement it as if you were to call it would be crash the program
       q_ = nullptr;
       return true;
     }
@@ -125,16 +132,13 @@ public:
   ProduceReturnCode emplace(Args&&... args)
   {
     if (0 == this->last_producer_idx_)
-    {
       this->last_producer_idx_ = this->ctx_.aquire_idx();
-    }
 
     auto r = this->q_->emplace(this->last_producer_idx_, *static_cast<Derived*>(this),
                                std::forward<Args>(args)...);
-    if (ProduceReturnCode::Published == r)
-    {
+    if (ProduceReturnCode::Published == r || ProduceReturnCode::SlowPublisher == r)
       this->last_producer_idx_ = 0;
-    }
+
     return r;
   }
 };

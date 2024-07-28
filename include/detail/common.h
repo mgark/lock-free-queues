@@ -46,7 +46,9 @@ enum class ProduceReturnCode
 {
   Published,
   NotRunning,
-  TryAgain
+  SlowConsumer,
+  NoConsumers,
+  SlowPublisher
 };
 
 enum class ConsumerAttachReturnCode

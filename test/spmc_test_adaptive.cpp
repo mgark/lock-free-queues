@@ -95,7 +95,7 @@ TEST_CASE("SPMC Adaptive functional test - NON blocking producer and consumer")
       CHECK(ProduceReturnCode::Published == p.emplace(i, i, 100.0, 'A'));
     }
 
-    CHECK(ProduceReturnCode::TryAgain == p.emplace(i, i, 100.0, 'A'));
+    CHECK(ProduceReturnCode::SlowConsumer == p.emplace(i, i, 100.0, 'A'));
   }
 
   {
@@ -115,7 +115,7 @@ TEST_CASE("SPMC Adaptive functional test - NON blocking producer and consumer")
       CHECK(ProduceReturnCode::Published == p.emplace(i, i, 100.0, 'A'));
     }
 
-    CHECK(ProduceReturnCode::TryAgain == p.emplace(i, i, 100.0, 'A'));
+    CHECK(ProduceReturnCode::SlowConsumer == p.emplace(i, i, 100.0, 'A'));
   }
 
   {
@@ -135,7 +135,7 @@ TEST_CASE("SPMC Adaptive functional test - NON blocking producer and consumer")
       CHECK(ProduceReturnCode::Published == p.emplace(i, i, 100.0, 'A'));
     }
 
-    CHECK(ProduceReturnCode::TryAgain == p.emplace(i, i, 100.0, 'A'));
+    CHECK(ProduceReturnCode::SlowConsumer == p.emplace(i, i, 100.0, 'A'));
   }
 }
 int main(int argc, char** argv) { return Catch::Session().run(argc, argv); }

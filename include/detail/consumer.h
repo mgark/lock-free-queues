@@ -20,6 +20,7 @@
 #include "detail/spin_lock.h"
 #include <array>
 #include <atomic>
+#include <cstdlib>
 #include <deque>
 #include <initializer_list>
 #include <limits>
@@ -35,7 +36,6 @@ class alignas(64) ConsumerBase
 protected:
   Queue* q_;
   size_t n_;
-  size_t orig_n_;
   size_t consumer_next_idx_;
   size_t previous_version_;
   size_t idx_mask_;
@@ -84,7 +84,6 @@ public:
 
   void increment_queue_idx(size_t queue_sz, size_t batch_sz)
   {
-    orig_n_ = queue_sz;
     idx_mask_ = queue_sz - 1;
     items_per_batch_ = batch_sz;
     next_checkout_point_idx_ = items_per_batch_ + (consumer_next_idx_ - consumer_next_idx_ % items_per_batch_);
@@ -349,7 +348,7 @@ struct alignas(64) AnycastConsumerGroup
   std::array<ConsumerType, MAX_SIZE> consumers;
   std::array<std::atomic<Queue*>, MAX_SIZE> queues;
   std::array<Spinlock, MAX_SIZE> queue_locks;
-  std::atomic_size_t max_idx{0};
+  std::atomic_size_t max_idx{std::numeric_limits<size_t>::max()};
   Spinlock slow_path_guard_;
 
   AnycastConsumerGroup() = default;
@@ -369,26 +368,32 @@ struct alignas(64) AnycastConsumerGroup
     }
   }
 
-  size_t size() const { return max_idx.load(std::memory_order_relaxed) + 1; }
+  size_t size() const { return max_idx.load(std::memory_order_acquire) + 1; }
 
   ConsumerAttachReturnCode attach(Queue* q)
   {
+    Spinlock::scoped_lock autolock(slow_path_guard_);
+    for (size_t i = 0; i < MAX_SIZE; ++i)
+    {
+      if (q == queues[i].load(std::memory_order_acquire))
+        return ConsumerAttachReturnCode::AlreadyAttached;
+    }
+
     for (size_t i = 0; i < MAX_SIZE; ++i)
     {
       std::unique_lock slot_lock(this->queue_locks[i]);
-      Queue* current_queue = queues[i].load(std::memory_order_relaxed);
+      Queue* current_queue = queues[i].load(std::memory_order_acquire);
       if (current_queue == nullptr)
       {
-        consumers[i].detach();
         auto r = consumers[i].attach(*q);
         if (r == ConsumerAttachReturnCode::Attached)
         {
-          queues[i].store(q, std::memory_order_relaxed);
+          queues[i].store(q, std::memory_order_release);
           slot_lock.unlock();
 
-          Spinlock::scoped_lock autolock(slow_path_guard_);
           size_t current_max_idx = max_idx.load(std::memory_order_relaxed);
-          max_idx.store(std::max(i, current_max_idx), std::memory_order_relaxed);
+          max_idx.store(current_max_idx == std::numeric_limits<size_t>::max() ? i : std::max(i, current_max_idx),
+                        std::memory_order_release);
         }
         return r;
       }
@@ -399,19 +404,21 @@ struct alignas(64) AnycastConsumerGroup
 
   bool detach(Queue* q)
   {
+    Spinlock::scoped_lock autolock(this->slow_path_guard_);
     for (size_t i = 0; i < MAX_SIZE; ++i)
     {
       Spinlock::scoped_lock slot_lock(this->queue_locks[i]);
-      bool is_queue_found = this->queues[i].load(std::memory_order_relaxed) == q;
+      bool is_queue_found = this->queues[i].load(std::memory_order_acquire) == q;
       if (is_queue_found)
       {
-        this->queues[i].store(nullptr, std::memory_order_relaxed);
-        Spinlock::scoped_lock autolock(this->slow_path_guard_);
-        // It shall be safe to update max consumer idx as the attach function would restore max consumer idx shall one appear right after.
+        consumers[i].detach();
+        this->queues[i].store(nullptr, std::memory_order_release);
+        // std::cout << "\n queue = " << i << " detached \n";
+        //  It shall be safe to update max consumer idx as the attach function would restore max consumer idx shall one appear right after.
         auto new_max_queue_id = MAX_SIZE;
         while (new_max_queue_id > 0)
         {
-          if (this->queues[new_max_queue_id - 1].load(std::memory_order_relaxed) == nullptr)
+          if (this->queues[new_max_queue_id - 1].load(std::memory_order_acquire) == nullptr)
           {
             --new_max_queue_id;
           }
@@ -421,8 +428,12 @@ struct alignas(64) AnycastConsumerGroup
           }
         }
 
-        this->max_idx.store(new_max_queue_id, std::memory_order_relaxed);
+        this->max_idx.store(new_max_queue_id - 1 /*has to be prev idx */, std::memory_order_release);
         return true;
+      }
+      else
+      {
+        // std::cout << "\n starnge queuue at idx =" << i << " not found \n";
       }
     }
 
@@ -496,16 +507,17 @@ private:
   ConsumeReturnCode do_consume_blocking(F&& consumer_routine) requires(
     std::is_same_v<decltype(std::forward<F>(consumer_routine)(std::declval<std::add_lvalue_reference_t<typename ConsumerGroupType::ConsumerType>>())), ConsumeReturnCode>)
   {
-    ConsumeReturnCode prev_ret = ConsumeReturnCode::NothingToConsume;
-    uint32_t consecutive_stops = 0;
     size_t queues_num;
+    uint32_t consecutive_stops = 0;
+    ConsumeReturnCode prev_ret = ConsumeReturnCode::NothingToConsume;
 
     do
     {
       queues_num = consumer_group_.size();
       if (0 == queues_num)
       {
-        continue;
+        // if there are no active consumers attached, there is nothing to consumer either and to avoid been stuck we have to return
+        return ConsumeReturnCode::NothingToConsume;
       }
 
       size_t idx = current_queue_idx_;
@@ -537,7 +549,7 @@ private:
         }
       }
 
-      current_queue_idx_ = (current_queue_idx_ + 1) % queues_num;
+      current_queue_idx_ = (current_queue_idx_ + 1) % queues_num; // WARNING! this is slow!
     } while (prev_ret == ConsumeReturnCode::NothingToConsume || queues_num > consecutive_stops);
 
     return prev_ret;
@@ -621,7 +633,7 @@ private:
         return ConsumeReturnCode::NothingToConsume;
       }
 
-      current_queue_idx_ = (current_queue_idx_ + 1) % queues_num;
+      current_queue_idx_ = (current_queue_idx_ + 1) % queues_num; // WARNING! this is slow!
 
       Spinlock& spinlock = consumer_group_.queue_locks[idx];
       if (spinlock.try_lock())

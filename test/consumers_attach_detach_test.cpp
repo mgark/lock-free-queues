@@ -93,6 +93,7 @@ TEST_CASE("SingleThreaded SPMC attach detach test")
   {
     c.join();
   }
+  q.stop();
   producer.join();
 }
 
@@ -165,6 +166,7 @@ TEST_CASE("SingleThreaded ADAPTIVE Blocking SPMC attach detach test")
   {
     c.join();
   }
+  q.stop();
   producer.join();
 }
 

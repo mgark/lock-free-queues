@@ -38,21 +38,19 @@ int main()
   ProducerSynchronizedContext producer_group;
   using Queue = SPMCMulticastQueueReliableBounded<Order, 2>;
   Queue q1(8);
-  Queue q2(8);
 
   constexpr bool blocking = true;
-  ConsumerBlocking<Queue> c1[2] = {q1, q2};
+  ConsumerBlocking<Queue> c1{q1};
   ProducerBlocking<Queue, ProducerKind::Synchronized> p1(q1, producer_group);
-  ProducerBlocking<Queue, ProducerKind::Synchronized> p2(q2, producer_group);
+  ProducerBlocking<Queue, ProducerKind::Synchronized> p2(q1, producer_group);
   q1.start();
-  q2.start();
   {
     p1.emplace(1u, 1u, 100.0, 'A');
     p2.emplace(2u, 2u, 100.0, 'A');
   }
   {
-    c1[0].consume([](const Order& o) { std::cout << o; });
-    c1[1].consume([](const Order& o) { std::cout << o; });
+    c1.consume([](const Order& o) { std::cout << o; });
+    c1.consume([](const Order& o) { std::cout << o; });
   }
 
   return 0;

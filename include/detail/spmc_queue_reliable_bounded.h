@@ -179,17 +179,18 @@ public:
     return false;
   }
 
-  size_t try_accept_new_consumer(size_t i, size_t original_idx, size_t previous_version)
+  size_t try_accept_new_consumer(size_t i, size_t original_idx)
   {
-    size_t consumer_next_idx = this->consumers_progress_[i].idx.load(std::memory_order_relaxed);
+    size_t consumer_next_idx = this->consumers_progress_[i].idx.load(std::memory_order_acquire);
     if (CONSUMER_JOIN_REQUESTED == consumer_next_idx)
     {
       // new consumer wants a ticket!
       if (this->consumers_progress_[i].idx.compare_exchange_strong(
-            consumer_next_idx, CONSUMER_JOIN_INPROGRESS, std::memory_order_relaxed, std::memory_order_relaxed))
+            consumer_next_idx, CONSUMER_JOIN_INPROGRESS, std::memory_order_acquire, std::memory_order_relaxed))
       {
         consumer_next_idx = original_idx;
-        this->consumers_progress_[i].previous_version.store(previous_version, std::memory_order_relaxed);
+        size_t previous_version = consumer_next_idx / this->size();
+        this->consumers_progress_[i].previous_version.store(previous_version, std::memory_order_release);
         this->consumers_progress_[i].idx.store(consumer_next_idx, std::memory_order_release);
         this->consumers_pending_attach_.fetch_sub(1, std::memory_order_release);
       }
@@ -205,20 +206,19 @@ public:
       return ProduceReturnCode::NotRunning;
     }
 
-    size_t idx = original_idx & this->idx_mask_;
-    Node& node = this->nodes_[idx];
-    size_t version = node.version_.load(std::memory_order_relaxed);
-
     size_t min_next_consumer_idx = producer.get_min_next_consumer_idx_cached();
-    bool first_time_publish = min_next_consumer_idx == CONSUMER_IS_WELCOME;
-    bool no_free_slot = first_time_publish || (original_idx - min_next_consumer_idx >= this->n_);
+    bool no_active_consumers = min_next_consumer_idx == CONSUMER_IS_WELCOME;
+    bool no_free_slot = no_active_consumers || (original_idx - min_next_consumer_idx >= this->n_);
+    if (!no_active_consumers && original_idx < min_next_consumer_idx)
+      return ProduceReturnCode::SlowPublisher;
+
     while (no_free_slot || this->consumers_pending_attach_.load(std::memory_order_acquire))
     {
       size_t min_next_consumer_idx_local = CONSUMER_IS_WELCOME;
       auto max_consumer_id = this->max_consumer_id_.load(std::memory_order_acquire);
       for (size_t i = 1; i <= max_consumer_id; ++i)
       {
-        size_t consumer_next_idx = try_accept_new_consumer(i, original_idx, version);
+        size_t consumer_next_idx = try_accept_new_consumer(i, original_idx);
         if (consumer_next_idx < CONSUMER_JOIN_INPROGRESS)
         {
           min_next_consumer_idx_local = std::min(min_next_consumer_idx_local, consumer_next_idx);
@@ -226,8 +226,13 @@ public:
       }
 
       producer.cache_min_next_consumer_idx(min_next_consumer_idx_local);
-      no_free_slot = (min_next_consumer_idx_local != CONSUMER_IS_WELCOME &&
-                      original_idx - min_next_consumer_idx_local >= this->n_);
+      no_active_consumers = min_next_consumer_idx_local == CONSUMER_IS_WELCOME;
+      no_free_slot = (no_active_consumers || original_idx - min_next_consumer_idx_local >= this->n_);
+
+      if (no_active_consumers)
+        return ProduceReturnCode::NoConsumers;
+      else if (original_idx < min_next_consumer_idx_local)
+        return ProduceReturnCode::SlowPublisher;
 
       if (!is_running())
       {
@@ -238,9 +243,24 @@ public:
       {
         if (no_free_slot)
         {
-          return ProduceReturnCode::TryAgain;
+          return ProduceReturnCode::SlowConsumer;
         }
       }
+    }
+
+    size_t idx = original_idx & this->idx_mask_;
+    Node& node = this->nodes_[idx];
+    size_t orig_version = node.version_.load(std::memory_order_acquire);
+    size_t version;
+
+    if constexpr (Producer::producer_kind == ProducerKind::Synchronized)
+    {
+      // cannot estimate properly version as consumer can join / detach dynamically...
+      version = original_idx / this->size();
+    }
+    else
+    {
+      version = orig_version;
     }
 
     void* storage = node.storage_;
@@ -253,7 +273,24 @@ public:
     }
 
     NodeAllocTraits::construct(this->alloc_, static_cast<T*>(storage), std::forward<Args>(args)...);
-    node.version_.store(version + 1, std::memory_order_release);
+    if constexpr (Producer::producer_kind == ProducerKind::Synchronized)
+    {
+      // cannot estimate properly version as consumer can join / detach dynamically...
+      ++version;
+      while (orig_version < version)
+      {
+        if (node.version_.compare_exchange_strong(orig_version, version, std::memory_order_release,
+                                                  std::memory_order_relaxed))
+          return ProduceReturnCode::Published;
+      }
+
+      return ProduceReturnCode::SlowPublisher;
+    }
+    else
+    {
+      node.version_.store(1 + version, std::memory_order_release);
+    }
+
     return ProduceReturnCode::Published;
   }
 
@@ -279,7 +316,7 @@ public:
       if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
       {
         this->consumers_progress_[consumer.consumer_id_].idx.store(consumer.consumer_next_idx_,
-                                                                   std::memory_order_relaxed);
+                                                                   std::memory_order_release);
         consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
       }
 
@@ -294,12 +331,6 @@ public:
   template <class C>
   ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node, size_t version, C& consumer)
   {
-    // TODO: need to re-think this!
-    if (consumer.is_slow_consumer())
-    {
-      return ConsumeReturnCode::SlowConsumer;
-    }
-
     if (consumer.previous_version_ < version)
     {
       if (idx + 1 == this->n_)
@@ -311,7 +342,7 @@ public:
       if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
       {
         this->consumers_progress_[consumer.consumer_id_].idx.store(consumer.consumer_next_idx_,
-                                                                   std::memory_order_relaxed);
+                                                                   std::memory_order_release);
         consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
       }
       return ConsumeReturnCode::Consumed;

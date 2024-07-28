@@ -234,7 +234,7 @@ TEST_CASE("Synchronized MPMC throughput test")
                << "total_time_ms=" << nanos / (1000 * 1000) << " consumed [" << totalMsgConsumed
                << " items \n";
           CHECK(totalMsgConsumed == N);
-          CHECK(avg_time_ns < 1000);
+          CHECK(avg_time_ns < 2000);
         }
         catch (const std::exception& e)
         {

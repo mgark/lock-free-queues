@@ -36,6 +36,8 @@ Consumers don't need to track their index even, just check if a given slot got a
 # TODO
 
 - full clang support
+- byte queue with variable message length
+- right now consumers can attach and detach dynamically, but so shall be producers too! 
 - easy installation on target platforms
 - write more tests
 - ~[anycast queues] provide an option for multi consumers to exclusively consume items from the queue, which is more like a traditional queue.~
@@ -46,4 +48,3 @@ Consumers don't need to track their index even, just check if a given slot got a
 - test the queues on devices with weak memory ordering to catch any possible race condition
 - use Relacy Race Detector to spot any potential race condition
 - make publishers work with output iterators
-- byte queue with variable message length
