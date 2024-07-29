@@ -339,6 +339,7 @@ struct ConsumerNonBlocking : ConsumerBase<Queue>
   }
 };
 
+// TODO: how to ensure consumer group cannot out-live the queues themsleves?
 template <class Queue, size_t MAX_SIZE = 8>
 struct alignas(64) AnycastConsumerGroup
 {

@@ -64,6 +64,7 @@ struct alignas(64) ProducerSingleThreadedContext
   }
 };
 
+// TODO: Synchronized context can only work with one queue so we must ensure through interface that is enforced!
 template <class Queue, ProducerKind producerKind, class Derived>
 class ProducerBase
 {
