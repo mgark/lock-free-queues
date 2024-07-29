@@ -129,9 +129,12 @@ TEST_CASE("Multi-threaded Anycast MPMC attach detach test")
 
   std::string s;
   std::mutex guard;
-  Queue queue(_PUBLISHER_QUEUE_SIZE);
+  std::deque<Queue> queues;
+  queues.emplace_back(_PUBLISHER_QUEUE_SIZE);
+  queues.emplace_back(_PUBLISHER_QUEUE_SIZE);
+  // Queue queue2(_PUBLISHER_QUEUE_SIZE);
 
-  AnycastConsumerGroup<Queue> consumer_group({std::to_address(&queue)});
+  AnycastConsumerGroup<Queue> consumer_group({std::to_address(&queues[0]), std::to_address(&queues[1])});
   std::vector<std::thread> consumers;
 
   for (size_t consumer_id = 0; consumer_id < _MAX_CONSUMERS_; ++consumer_id)
@@ -147,14 +150,16 @@ TEST_CASE("Multi-threaded Anycast MPMC attach detach test")
           {
             std::srand(std::time(nullptr));
             bool attach = !(i % 10 == 0);
+            size_t queue_idx = i % queues.size();
+
             if (attach)
             {
               // consumer_group.detach(std::to_address(&queue));
-              consumer_group.attach(std::to_address(&queue));
+              consumer_group.attach(std::to_address(&queues[queue_idx]));
             }
             else
             {
-              consumer_group.detach(std::to_address(&queue));
+              consumer_group.detach(std::to_address(&queues[queue_idx]));
             }
 
             int j = 0;
@@ -183,21 +188,46 @@ TEST_CASE("Multi-threaded Anycast MPMC attach detach test")
   }
 
   std::vector<std::thread> producers;
-  ProducerSynchronizedContext producer_group;
+  ProducerSynchronizedContext producer_group_1;
+  ProducerSynchronizedContext producer_group_2;
+  queues[0].start();
+  queues[1].start();
   for (size_t i = 1; i <= _MAX_PUBLISHERS_; ++i)
   {
     producers.emplace_back(std::thread(
-      [&queue, &producer_group]()
+      [&queues, &producer_group_1, &producer_group_2]()
       {
         try
         {
-          ProducerBlocking<Queue, ProducerKind::Synchronized> p(queue, producer_group);
-          queue.start();
+          ProducerBlocking<Queue, ProducerKind::Synchronized> p1(queues[0], producer_group_1);
 
           size_t n = 1;
           while (1)
           {
-            if (p.emplace(OrderNonTrivial{n, 1U, 100.1, 'B'}) == ProduceReturnCode::NotRunning)
+            if (p1.emplace(OrderNonTrivial{n, 1U, 100.1, 'B'}) == ProduceReturnCode::NotRunning)
+              break;
+          }
+        }
+        catch (const std::exception& e)
+        {
+          TLOG << "\n got exception " << e.what();
+        }
+      }));
+  }
+
+  for (size_t i = 1; i <= _MAX_PUBLISHERS_; ++i)
+  {
+    producers.emplace_back(std::thread(
+      [&queues, &producer_group_2]()
+      {
+        try
+        {
+          ProducerBlocking<Queue, ProducerKind::Synchronized> p2(queues[1], producer_group_2);
+
+          size_t n = 1;
+          while (1)
+          {
+            if (p2.emplace(OrderNonTrivial{n, 1U, 100.1, 'B'}) == ProduceReturnCode::NotRunning)
               break;
           }
         }
@@ -212,7 +242,8 @@ TEST_CASE("Multi-threaded Anycast MPMC attach detach test")
     c.join();
 
   TLOG << "\n all consumers are done\n";
-  queue.stop();
+  queues[0].stop();
+  queues[1].stop();
 
   for (auto& p : producers)
     p.join();

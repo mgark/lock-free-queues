@@ -231,13 +231,15 @@ public:
 
       if (no_active_consumers)
         return ProduceReturnCode::NoConsumers;
-      else if (original_idx < min_next_consumer_idx_local)
-        return ProduceReturnCode::SlowPublisher;
+
+      if constexpr (Producer::producer_kind == ProducerKind::Synchronized)
+      {
+        if (original_idx < min_next_consumer_idx_local)
+          return ProduceReturnCode::SlowPublisher;
+      }
 
       if (!is_running())
-      {
         return ProduceReturnCode::NotRunning;
-      }
 
       if constexpr (!blocking)
       {
