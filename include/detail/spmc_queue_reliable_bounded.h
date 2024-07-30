@@ -56,20 +56,25 @@ class SPMCMulticastQueueReliableBounded
     }
   };*/
 
-  struct alignas(64) ProducerContext
+  struct ProducerContext
   {
-    std::atomic<size_t> producer_idx_;
-    std::atomic<size_t> min_next_consumer_idx_;
-    std::atomic<size_t> min_next_producer_idx_;
+    alignas(64) std::atomic<size_t> producer_idx_;
+    alignas(64) std::atomic<size_t> min_next_consumer_idx_;
+    alignas(64) std::atomic<size_t> min_next_producer_idx_;
 
-    std::array<std::atomic<size_t>, _MAX_PRODUCER_N_ + 1> producer_progress_;
-    std::array<std::atomic<bool>, _MAX_PRODUCER_N_ + 1> producer_registry_;
-    Me& host_;
+    struct alignas(64) ProducerProgress
+    {
+      std::atomic<size_t> idx;
+    };
+
+    std::array<ProducerProgress, _MAX_PRODUCER_N_ + 1> producer_progress_;
+    alignas(64) std::array<std::atomic<bool>, _MAX_PRODUCER_N_ + 1> producer_registry_;
+    alignas(64) Me& host_;
 
     ProducerContext(Me& host) : host_(host)
     {
       for (auto it = std::begin(producer_progress_); it != std::end(producer_progress_); ++it)
-        it->store(PRODUCER_IS_WELCOME, std::memory_order_release);
+        it->idx.store(PRODUCER_IS_WELCOME, std::memory_order_release);
 
       std::fill(std::begin(producer_registry_), std::end(producer_registry_), 0 /*unlocked*/);
 
@@ -115,7 +120,7 @@ class SPMCMulticastQueueReliableBounded
       {
         old_idx = producer_idx_.load(std::memory_order_acquire);
         new_idx = old_idx + 1;
-        host_.producer_ctx_.producer_progress_[p.producer_id_].store(new_idx, std::memory_order_release);
+        host_.producer_ctx_.producer_progress_[p.producer_id_].idx.store(new_idx, std::memory_order_release);
 #ifdef _TRACE_STATS_
         ++p.stats().cas_num;
 #endif
@@ -132,7 +137,7 @@ class SPMCMulticastQueueReliableBounded
       do
       {
         new_idx = 1 + old_idx;
-        host_.producer_ctx_.producer_progress_[p.producer_id_].store(new_idx, std::memory_order_release);
+        host_.producer_ctx_.producer_progress_[p.producer_id_].idx.store(new_idx, std::memory_order_release);
       } while (!producer_idx_.compare_exchange_strong(old_idx, new_idx, std::memory_order_release,
                                                       std::memory_order_acquire));
       return new_idx;
@@ -371,7 +376,7 @@ public:
     bool is_locked = locker.load(std::memory_order_acquire);
     if (is_locked)
     {
-      this->producer_ctx_.producer_progress_.at(producer_id).store(PRODUCER_IS_WELCOME, std::memory_order_release);
+      this->producer_ctx_.producer_progress_.at(producer_id).idx.store(PRODUCER_IS_WELCOME, std::memory_order_release);
       if (locker.compare_exchange_strong(is_locked, false, std::memory_order_release, std::memory_order_relaxed))
       {
         // this->consumers_pending_dettach_.fetch_add(1, std::memory_order_release);
@@ -386,7 +391,8 @@ public:
         auto new_max_producer_id = _MAX_PRODUCER_N_;
         while (new_max_producer_id > 0)
         {
-          if (this->producer_ctx_.producer_progress_.at(new_max_producer_id).load(std::memory_order_relaxed) == PRODUCER_IS_WELCOME)
+          if (this->producer_ctx_.producer_progress_.at(new_max_producer_id).idx.load(std::memory_order_relaxed) ==
+              PRODUCER_IS_WELCOME)
             --new_max_producer_id;
           else
           {
@@ -412,7 +418,7 @@ public:
   void accept_producer(Producer& p)
   {
     size_t expect_welcome = PRODUCER_IS_WELCOME;
-    if (!this->producer_ctx_.producer_progress_[p.producer_id_].compare_exchange_strong(
+    if (!this->producer_ctx_.producer_progress_[p.producer_id_].idx.compare_exchange_strong(
           expect_welcome, p.last_producer_idx_, std::memory_order_acquire, std::memory_order_relaxed))
     {
       throw std::runtime_error("producer is not welcomed!");
@@ -426,7 +432,7 @@ public:
     size_t next_producer_idx = original_idx + 1;
     if (next_producer_idx >= p.next_checkpoint_idx_)
     {
-      this->producer_ctx_.producer_progress_[p.producer_id_].store(next_producer_idx, std::memory_order_release);
+      this->producer_ctx_.producer_progress_[p.producer_id_].idx.store(next_producer_idx, std::memory_order_release);
       p.next_checkpoint_idx_ = next_producer_idx + p.items_per_batch_;
     }
   }
@@ -434,7 +440,7 @@ public:
   template <class Producer>
   void try_update_producer_progress(size_t original_idx, Producer& p) requires(_MAX_PRODUCER_N_ > 1)
   {
-    this->producer_ctx_.producer_progress_[p.producer_id_].store(PRODUCER_JOINED, std::memory_order_release);
+    this->producer_ctx_.producer_progress_[p.producer_id_].idx.store(PRODUCER_JOINED, std::memory_order_release);
   }
 
   template <class Producer, class... Args, bool blocking = Producer::blocking_v>
@@ -462,7 +468,7 @@ public:
       auto max_producer_id = this->max_producer_id_.load(std::memory_order_acquire);
       for (size_t i = 1; i <= max_producer_id; ++i)
       {
-        min_next_producer_idx = this->producer_ctx_.producer_progress_[i].load(std::memory_order_acquire);
+        min_next_producer_idx = this->producer_ctx_.producer_progress_[i].idx.load(std::memory_order_acquire);
         if (min_next_producer_idx < PRODUCER_JOINED)
         {
           min_next_producer_idx_local = std::min(min_next_producer_idx_local, min_next_producer_idx);

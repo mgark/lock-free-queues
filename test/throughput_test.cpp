@@ -189,7 +189,7 @@ TEST_CASE("Synchronized MPMC throughput test")
   std::mutex guard;
   constexpr size_t _MAX_CONSUMERS_ = 4;
   constexpr size_t _MAX_PUBLISHERS_ = 4;
-  constexpr size_t _PUBLISHER_QUEUE_SIZE = 4;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
   constexpr size_t _MSG_PER_CONSUMER_ = 4000000;
   constexpr size_t N = _MAX_PUBLISHERS_ * _MSG_PER_CONSUMER_;
 
@@ -326,6 +326,7 @@ TEST_CASE("SingleThreaded MPMC throughput test")
           ++consumer_joined_num;
           auto begin = std::chrono::system_clock::now();
           size_t totalMsgConsumed = 0;
+          size_t consumed_num = 0;
           bool is_consumer_done[_MAX_PUBLISHERS_]{};
           while (std::count(std::begin(is_consumer_done), std::end(is_consumer_done), true) < _MAX_PUBLISHERS_)
           {
@@ -335,14 +336,18 @@ TEST_CASE("SingleThreaded MPMC throughput test")
                 [&](const OrderNonTrivial& r) mutable
                 {
                   totalMsgConsumed += r.vol;
-                  if (r.id >= _MSG_PER_CONSUMER_) // consumed all messages!
+                  if (r.id >= _MSG_PER_CONSUMER_)
+                  { // consumed all messages!
                     is_consumer_done[publisher_id] = true;
+                    ++consumed_num;
+                  }
                 });
               if (r == ConsumeReturnCode::Stopped)
                 is_consumer_done[publisher_id] = true;
             }
           }
 
+          CHECK(consumed_num == _MAX_PUBLISHERS_);
           REQUIRE(totalMsgConsumed > 0);
           std::scoped_lock lock(guard);
           auto end = std::chrono::system_clock::now();
