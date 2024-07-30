@@ -35,6 +35,7 @@ struct Order
 int main()
 {
 #if defined(__x86_64__)
+  #ifndef _DISABLE_UNRELIABLE_MULTICAST_TEST_
   constexpr size_t MAX_CONSUMER_NUM = 2;
   constexpr size_t BATCH_NUM = 1;
   using Queue = SPMCMulticastQueueUnreliable<Order, MAX_CONSUMER_NUM, BATCH_NUM>;
@@ -58,6 +59,7 @@ int main()
     c2.consume([&q](const Order& o) mutable { std::cout << o; });
     c2.consume([&q](const Order& o) mutable { std::cout << o; });
   }
+  #endif
 #endif
 
   return 0;

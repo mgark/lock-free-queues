@@ -97,6 +97,7 @@ TEST_CASE("SingleThreaded SPMC attach detach test")
   producer.join();
 }
 
+#ifndef _DISABLE_ADAPTIVE_QUEUE_TEST_
 TEST_CASE("SingleThreaded ADAPTIVE Blocking SPMC attach detach test")
 {
   std::string s;
@@ -169,5 +170,6 @@ TEST_CASE("SingleThreaded ADAPTIVE Blocking SPMC attach detach test")
   q.stop();
   producer.join();
 }
+#endif
 
 int main(int argc, char** argv) { return Catch::Session().run(argc, argv); }

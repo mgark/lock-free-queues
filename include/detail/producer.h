@@ -43,7 +43,11 @@ struct alignas(64) ProducerSynchronizedContext
     min_next_consumer_idx_.store(idx, std::memory_order_release);
   }
 
-  size_t aquire_idx() { return producer_idx_.fetch_add(1, std::memory_order_release); }
+  template <class Producer>
+  size_t aquire_idx(Producer& p)
+  {
+    return producer_idx_.fetch_add(1, std::memory_order_release);
+  }
   void release_idx() { producer_idx_.fetch_sub(1, std::memory_order_release); }
 };
 
@@ -57,7 +61,8 @@ struct alignas(64) ProducerSingleThreadedContext
 
   size_t min_producer_idx_cached() const { return producer_idx_; }
 
-  size_t aquire_idx()
+  template <class Producer>
+  size_t aquire_idx(Producer& p)
   {
     // first increment will make it 0!
     return ++producer_idx_;
@@ -76,37 +81,69 @@ protected:
     std::conditional_t<producerKind == ProducerKind::SingleThreaded, ProducerSingleThreadedContext, ProducerSynchronizedContext&>;
 
   ProducerContext ctx_;
-  size_t last_producer_idx_{0};
+  size_t last_producer_idx_{PRODUCER_IS_WELCOME};
+  size_t items_per_batch_;
+  size_t next_checkpoint_idx_;
+  size_t producer_id_{0};
+
+#ifdef _TRACE_STATS_
+  struct Stats
+  {
+    size_t pub_num;
+    size_t cas_num;
+  };
+
+  Stats stats_;
+#endif
 
 public:
   static constexpr auto producer_kind = producerKind;
 
+#ifdef _TRACE_STATS_
+  Stats& stats() { return stats_; }
+  const Stats& stats() const { return stats_; }
+#endif
+
   ProducerBase() = default;
-  ProducerBase(Queue& q) requires(producerKind == ProducerKind::SingleThreaded) { attach(q); }
+  ProducerBase(Queue& q) requires(producerKind == ProducerKind::SingleThreaded)
+  {
+    if (ProducerAttachReturnCode::Attached != attach(q))
+    {
+      throw std::runtime_error(
+        "could not attach a producer to the queue - because either there is no space for more "
+        "consumers / queue has been stopped");
+    }
+  }
+  // TODO: remove this!
   ProducerBase(Queue& q, ProducerSynchronizedContext& ctx) requires(producerKind == ProducerKind::Synchronized)
     : ctx_(ctx)
   {
-    attach(q);
+    if (ProducerAttachReturnCode::Attached != attach(q))
+    {
+      throw std::runtime_error(
+        "could not attach a producer to the queue - because either there is no space for more "
+        "consumers / queue has been stopped");
+    }
   }
   ~ProducerBase() { detach(); }
 
-  bool attach(Queue& q)
+  ProducerAttachReturnCode attach(Queue& q)
   {
     if (q_)
     {
-      return false;
+      return ProducerAttachReturnCode::AlreadyAttached;
     }
 
-    q_ = std::to_address(&q);
-    last_producer_idx_ = 0;
-
-    if constexpr (producerKind == ProducerKind::SingleThreaded)
+    typename Queue::ProducerTicket ticket = q.attach_producer(*this);
+    if (ticket.ret_code == ProducerAttachReturnCode::Attached)
     {
-      ctx_.producer_idx_ = std::numeric_limits<size_t>::max();
-      ctx_.min_next_consumer_idx_ = CONSUMER_IS_WELCOME;
+      last_producer_idx_ = PRODUCER_JOIN_INPROGRESS;
+      items_per_batch_ = ticket.items_per_batch;
+      producer_id_ = ticket.producer_id;
+      q_ = &q;
     }
 
-    return true;
+    return ticket.ret_code;
   }
 
   bool detach()
@@ -114,13 +151,14 @@ public:
     if (q_)
     {
       // TODO: need properly implement it as if you were to call it would be crash the program
-      q_ = nullptr;
-      return true;
+      if (q_->detach_producer(producer_id_))
+      {
+        q_ = nullptr;
+        return true;
+      }
     }
-    else
-    {
-      return false;
-    }
+
+    return false;
   }
   size_t get_min_next_consumer_idx_cached() const
   {
@@ -132,13 +170,24 @@ public:
   template <class... Args>
   ProduceReturnCode emplace(Args&&... args)
   {
-    if (0 == this->last_producer_idx_)
-      this->last_producer_idx_ = this->ctx_.aquire_idx();
+    if (PRODUCER_JOIN_INPROGRESS == this->last_producer_idx_)
+    {
+      this->last_producer_idx_ = this->q_->aquire_first_idx(static_cast<Derived&>(*this));
+      // this->q_->accept_producer(*this);
+      next_checkpoint_idx_ =
+        items_per_batch_ + (this->last_producer_idx_ - this->last_producer_idx_ % items_per_batch_);
+    }
+    else if (0 == this->last_producer_idx_)
+    {
+      this->last_producer_idx_ = this->q_->aquire_idx(static_cast<Derived&>(*this));
+    }
 
     auto r = this->q_->emplace(this->last_producer_idx_, *static_cast<Derived*>(this),
                                std::forward<Args>(args)...);
     if (ProduceReturnCode::Published == r || ProduceReturnCode::SlowPublisher == r)
+    {
       this->last_producer_idx_ = 0;
+    }
 
     return r;
   }

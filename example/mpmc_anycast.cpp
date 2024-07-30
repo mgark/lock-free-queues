@@ -35,6 +35,7 @@ struct Order
 
 int main()
 {
+#ifndef _DISABLE_UNRELIABLE_MULTICAST_TEST_
   using Queue = SPMCMulticastQueueReliableBounded<Order, 2>;
   Queue q1(8);
   Queue q2(8);
@@ -55,6 +56,7 @@ int main()
     c1.consume([](const Order& o) { std::cout << o; });
     c2.consume([](const Order& o) { std::cout << o; });
   }
+#endif
 
   return 0;
 }

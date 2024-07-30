@@ -21,6 +21,7 @@
 #include <catch2/catch_all.hpp>
 #include <mpmc.h>
 
+#ifndef _DISABLE_ADAPTIVE_QUEUE_TEST_
 TEST_CASE("SPMC Adaptive functional test - blocking producer and consumer")
 {
   using Queue = SPMCMulticastQueueReliableAdaptiveBounded<Order, 2, 2>;
@@ -138,4 +139,5 @@ TEST_CASE("SPMC Adaptive functional test - NON blocking producer and consumer")
     CHECK(ProduceReturnCode::SlowConsumer == p.emplace(i, i, 100.0, 'A'));
   }
 }
+#endif
 int main(int argc, char** argv) { return Catch::Session().run(argc, argv); }

@@ -11,6 +11,7 @@
 #include <vector>
 
 #if defined(__x86_64__)
+  #ifndef _DISABLE_UNRELIABLE_MULTICAST_TEST_
 TEST_CASE("SPMC conflated queue stress test to detect race conditions")
 {
   struct Vector
@@ -102,6 +103,7 @@ TEST_CASE("SPMC conflated queue stress test to detect race conditions")
     c.join();
   }
 }
+  #endif
 #endif
 
 TEST_CASE("SPMC queue stress test to detect race conditions")

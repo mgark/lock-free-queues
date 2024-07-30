@@ -21,7 +21,7 @@
 
 TEST_CASE("MPMC functional test")
 {
-  using Queue = SPMCMulticastQueueReliableBounded<Order, 2>;
+  using Queue = SPMCMulticastQueueReliableBounded<Order, 2, 2>;
   Queue q1(8);
   Queue q2(8);
 
@@ -53,7 +53,7 @@ TEST_CASE("MPMC functional test")
 
 TEST_CASE("MPMC Anycasy Blocking consumer functional test")
 {
-  using Queue = SPMCMulticastQueueReliableBounded<Order, 2>;
+  using Queue = SPMCMulticastQueueReliableBounded<Order, 2, 2>;
   Queue q1(8);
   Queue q2(8);
 
@@ -118,7 +118,7 @@ TEST_CASE("MPMC Anycasy Blocking consumer functional test")
 
 TEST_CASE("MPMC Anycasy Non-Blocking consumer functional test")
 {
-  using Queue = SPMCMulticastQueueReliableBounded<Order, 2>;
+  using Queue = SPMCMulticastQueueReliableBounded<Order, 2, 2>;
   Queue q1(8);
   Queue q2(8);
 
@@ -181,9 +181,9 @@ TEST_CASE("MPMC Anycasy Non-Blocking consumer functional test")
   }
 }
 
-TEST_CASE("Multi-threaded MPMC functional test")
+TEST_CASE("Synchronized Blocking MPMC functional test")
 {
-  using Queue = SPMCMulticastQueueReliableBounded<Order, 2>;
+  using Queue = SPMCMulticastQueueReliableBounded<Order, 2, 2>;
   Queue q1(8);
 
   constexpr bool blocking = true;
@@ -209,6 +209,60 @@ TEST_CASE("Multi-threaded MPMC functional test")
     r = c2.consume([](const Order& o) { std::cout << o; });
     CHECK(ConsumeReturnCode::Consumed == r);
     r = c1.consume([](const Order& o) { std::cout << o; });
+    CHECK(ConsumeReturnCode::Consumed == r);
+  }
+}
+
+TEST_CASE("Synchronized Non-Blocking MPMC functional test")
+{
+  using Queue = SPMCMulticastQueueReliableBounded<Order, 2, 2, 2>;
+  Queue q1(2);
+
+  constexpr bool blocking = true;
+  ConsumerNonBlocking<Queue> c1 = {q1};
+  ConsumerNonBlocking<Queue> c2 = {q1};
+
+  ProducerSynchronizedContext producer_group;
+  ProducerNonBlocking<Queue, ProducerKind::Synchronized> p1(q1, producer_group);
+  ProducerNonBlocking<Queue, ProducerKind::Synchronized> p2(q1, producer_group);
+
+  q1.start();
+  {
+    auto r = p1.emplace(1u, 1u, 100.0, 'A');
+    CHECK(ProduceReturnCode::Published == r);
+    r = p2.emplace(2u, 2u, 100.0, 'A');
+    CHECK(ProduceReturnCode::Published == r);
+    r = p2.emplace(2u, 2u, 100.0, 'A');
+    CHECK(ProduceReturnCode::SlowConsumer == r);
+    r = p1.emplace(2u, 2u, 100.0, 'A');
+    CHECK(ProduceReturnCode::SlowConsumer == r);
+  }
+  {
+    auto r = c1.consume([](const Order& o) { std::cout << o; });
+    CHECK(ConsumeReturnCode::Consumed == r);
+    r = c2.consume([](const Order& o) { std::cout << o; });
+    CHECK(ConsumeReturnCode::Consumed == r);
+    r = c2.consume([](const Order& o) { std::cout << o; });
+    CHECK(ConsumeReturnCode::Consumed == r);
+    r = c1.consume([](const Order& o) { std::cout << o; });
+    CHECK(ConsumeReturnCode::Consumed == r);
+  }
+
+  {
+    auto r = p1.emplace(1u, 1u, 100.0, 'A');
+    CHECK(ProduceReturnCode::Published == r);
+    r = p2.emplace(2u, 2u, 100.0, 'A');
+    CHECK(ProduceReturnCode::Published == r);
+  }
+
+  {
+    auto r = c1.consume([](const Order& o) { CHECK(o.id == 2); });
+    CHECK(ConsumeReturnCode::Consumed == r);
+    r = c2.consume([](const Order& o) { CHECK(o.id == 2); });
+    CHECK(ConsumeReturnCode::Consumed == r);
+    r = c2.consume([](const Order& o) { CHECK(o.id == 1); });
+    CHECK(ConsumeReturnCode::Consumed == r);
+    r = c1.consume([](const Order& o) { CHECK(o.id == 1); });
     CHECK(ConsumeReturnCode::Consumed == r);
   }
 }

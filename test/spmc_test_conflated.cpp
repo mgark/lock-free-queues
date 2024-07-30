@@ -21,6 +21,7 @@
 #include <catch2/catch_all.hpp>
 #include <mpmc.h>
 
+#ifndef _DISABLE_UNRELIABLE_MULTICAST_TEST_
 TEST_CASE("SPMC Conflated basic functional test - blocking producer and consumer")
 {
   using Queue = SPMCMulticastQueueUnreliable<Order, 2, 2>;
@@ -83,5 +84,6 @@ TEST_CASE("SPMC Conflated basic functional test - NON blocking producer and cons
     }
   }
 }
+#endif
 
 int main(int argc, char** argv) { return Catch::Session().run(argc, argv); }

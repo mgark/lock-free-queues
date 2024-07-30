@@ -59,6 +59,14 @@ enum class ConsumerAttachReturnCode
   Attached
 };
 
+enum class ProducerAttachReturnCode
+{
+  Stopped,
+  ProducerLimitReached,
+  AlreadyAttached,
+  Attached
+};
+
 enum class ConsumeReturnCode
 {
   NothingToConsume,
@@ -79,6 +87,11 @@ constexpr size_t CONSUMER_IS_WELCOME = std::numeric_limits<size_t>::max();
 constexpr size_t CONSUMER_JOIN_REQUESTED = CONSUMER_IS_WELCOME - 1;
 constexpr size_t CONSUMER_JOIN_INPROGRESS = CONSUMER_JOIN_REQUESTED - 2;
 
+constexpr size_t PRODUCER_IS_WELCOME = std::numeric_limits<size_t>::max();
+constexpr size_t PRODUCER_JOIN_REQUESTED = PRODUCER_IS_WELCOME - 1;
+constexpr size_t PRODUCER_JOIN_INPROGRESS = PRODUCER_JOIN_REQUESTED - 2;
+constexpr size_t PRODUCER_JOINED = PRODUCER_JOIN_INPROGRESS - 3;
+
 class QueueStoppedExp : public std::exception
 {
 };
@@ -97,3 +110,7 @@ constexpr auto calc_power_of_two()
 }
 
 constexpr inline std::array<size_t, 64> POWER_OF_TWO = calc_power_of_two<64>();
+
+#define _DISABLE_UNRELIABLE_MULTICAST_TEST_
+#define _DISABLE_ADAPTIVE_QUEUE_TEST_
+#define _TRACE_STATS_

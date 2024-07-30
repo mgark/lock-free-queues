@@ -34,6 +34,7 @@ struct Order
 
 int main()
 {
+#ifndef _DISABLE_ADAPTIVE_QUEUE_TEST_
   using Queue = SPMCMulticastQueueReliableAdaptiveBounded<Order, 2, 2>;
   Queue q(2, 4);
 
@@ -46,6 +47,7 @@ int main()
   p.emplace(1u, 1u, 100.0, 'A');
   c1.consume([&q](const Order& o) mutable { std::cout << o; });
   c2.consume([&q](const Order& o) mutable { std::cout << o; });
+#endif
 
   return 0;
 }

@@ -39,6 +39,13 @@ public:
     ConsumerAttachReturnCode ret_code;
   };
 
+  struct ProducerTicket
+  {
+    size_t producer_id;
+    size_t items_per_batch;
+    ProducerAttachReturnCode ret_code;
+  };
+
 protected:
   struct Node
   {
