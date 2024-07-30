@@ -111,6 +111,6 @@ constexpr auto calc_power_of_two()
 
 constexpr inline std::array<size_t, 64> POWER_OF_TWO = calc_power_of_two<64>();
 
-#define _DISABLE_UNRELIABLE_MULTICAST_TEST_
+//#define _DISABLE_UNRELIABLE_MULTICAST_TEST_
 #define _DISABLE_ADAPTIVE_QUEUE_TEST_
 #define _TRACE_STATS_

@@ -25,16 +25,69 @@
   #include <atomic>
   #include <type_traits>
 
-template <class T, size_t _MAX_CONSUMER_N_ = 16, size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>>
+template <class T, size_t _MAX_CONSUMER_N_ = 8, size_t _MAX_PRODUCER_N_ = 1, size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>>
 class SPMCMulticastQueueUnreliable
-  : public SPMCMulticastQueueBase<T, SPMCMulticastQueueUnreliable<T, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>
+  : public SPMCMulticastQueueBase<T, SPMCMulticastQueueUnreliable<T, _MAX_CONSUMER_N_, _MAX_PRODUCER_N_, _BATCH_NUM_, Allocator>,
+                                  _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>
 {
   static_assert(std::is_trivially_copyable_v<T>);
+
+  struct ProducerContext
+  {
+    alignas(64) std::atomic<size_t> producer_idx_{std::numeric_limits<size_t>::max()};
+
+    template <class Producer>
+    size_t aquire_idx(Producer& p) requires(_MAX_PRODUCER_N_ == 1)
+    {
+      size_t new_idx = 1 + producer_idx_.load(std::memory_order_acquire);
+      producer_idx_.store(new_idx, std::memory_order_release);
+      return new_idx;
+    }
+
+    template <class Producer>
+    size_t aquire_idx(Producer& p) requires(_MAX_PRODUCER_N_ > 1)
+    {
+      size_t old_idx;
+      size_t new_idx;
+      do
+      {
+        old_idx = producer_idx_.load(std::memory_order_acquire);
+        new_idx = old_idx + 1;
+  #ifdef _TRACE_STATS_
+        ++p.stats().cas_num;
+  #endif
+      } while (!producer_idx_.compare_exchange_strong(old_idx, new_idx, std::memory_order_acq_rel,
+                                                      std::memory_order_acquire));
+      return new_idx;
+    }
+
+    template <class Producer>
+    size_t aquire_first_idx(Producer& p) requires(_MAX_PRODUCER_N_ == 1)
+    {
+      size_t new_idx;
+      size_t old_idx = producer_idx_.load(std::memory_order_acquire);
+      do
+      {
+        new_idx = 1 + old_idx;
+      } while (!producer_idx_.compare_exchange_strong(old_idx, new_idx, std::memory_order_release,
+                                                      std::memory_order_acquire));
+      return new_idx;
+    }
+
+    template <class Producer>
+    size_t aquire_first_idx(Producer& p) requires(_MAX_PRODUCER_N_ > 1)
+    {
+      return aquire_idx(p);
+    }
+  };
+
+  ProducerContext producer_ctx_;
 
 public:
   using Base = SPMCMulticastQueueBase<T, SPMCMulticastQueueUnreliable, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>;
   using NodeAllocTraits = typename Base::NodeAllocTraits;
   using Node = typename Base::Node;
+  using ProducerTicket = typename Base::ProducerTicket;
   using ConsumerTicket = typename Base::ConsumerTicket;
   using type = typename Base::type;
   using Base::Base;
@@ -56,6 +109,14 @@ public:
                   false - given consumer was already unlocked
   */
   bool detach_consumer(size_t consumer_id) { return true; }
+
+  template <class Producer>
+  ProducerTicket attach_producer(Producer& p)
+  {
+    return {std::numeric_limits<size_t>::max(), 0, ProducerAttachReturnCode::Attached};
+  }
+
+  bool detach_producer(size_t producer_id) { return true; }
 
   template <class Producer, class... Args, bool blocking = Producer::blocking_v>
   ProduceReturnCode emplace(size_t original_idx, Producer& producer, Args&&... args)
@@ -136,6 +197,18 @@ public:
     {
       return ConsumeReturnCode::NothingToConsume;
     }
+  }
+
+  template <class Producer>
+  size_t aquire_idx(Producer& p)
+  {
+    return producer_ctx_.aquire_idx(p);
+  }
+
+  template <class Producer>
+  size_t aquire_first_idx(Producer& p)
+  {
+    return producer_ctx_.aquire_first_idx(p);
   }
 };
 

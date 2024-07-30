@@ -83,7 +83,6 @@ protected:
   ProducerContext ctx_;
   size_t last_producer_idx_{PRODUCER_IS_WELCOME};
   size_t items_per_batch_;
-  size_t next_checkpoint_idx_;
   size_t producer_id_{0};
 
 #ifdef _TRACE_STATS_
@@ -160,12 +159,6 @@ public:
 
     return false;
   }
-  size_t get_min_next_consumer_idx_cached() const
-  {
-    return ctx_.get_min_next_consumer_idx_cached();
-  }
-
-  void cache_min_next_consumer_idx(size_t idx) { ctx_.cache_min_next_consumer_idx(idx); }
 
   template <class... Args>
   ProduceReturnCode emplace(Args&&... args)
@@ -173,9 +166,6 @@ public:
     if (PRODUCER_JOIN_INPROGRESS == this->last_producer_idx_)
     {
       this->last_producer_idx_ = this->q_->aquire_first_idx(static_cast<Derived&>(*this));
-      // this->q_->accept_producer(*this);
-      next_checkpoint_idx_ =
-        items_per_batch_ + (this->last_producer_idx_ - this->last_producer_idx_ % items_per_batch_);
     }
     else if (0 == this->last_producer_idx_)
     {
