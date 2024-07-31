@@ -37,11 +37,11 @@ Consumers don't need to track their index even, just check if a given slot got a
 
 - full clang support
 - byte queue with variable message length
-- right now consumers can attach and detach dynamically, but so shall be producers too! 
+- ~right now consumers can attach and detach dynamically, but so shall be producers too!~
 - easy installation on target platforms
 - write more tests
 - ~[anycast queues] provide an option for multi consumers to exclusively consume items from the queue, which is more like a traditional queue.~
-- implement slow consumer handling by allowing ring queue to grow dynamically - up to a limit. Also with this feature you'd get a pretty much unbounded queue as well and it would be very fast.
+- ~implement slow consumer handling by allowing ring queue to grow dynamically - up to a limit. Also with this feature you'd get a pretty much unbounded queue as well and it would be very fast.~ [Added support for SPMC queues only, synchronized MPMC queues not available]
 - benchmark against other implementations, including Java's Disruptor
 - support for queues over shared memory
 - micro optimizations for optimal assembly output including relaxing some of the atomics
