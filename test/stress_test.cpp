@@ -292,4 +292,99 @@ TEST_CASE("SPMC Synchronized queue stress test to detect race conditions")
   }
 }
 
+TEST_CASE("Adaptive SPMC  queue stress test to detect race conditions")
+{
+  // TODO: fix to support multie producers!
+  struct Vector
+  {
+    bool odd;
+    int64_t v1[10];
+  };
+
+  int i = 1;
+  Vector odd_vector;
+  odd_vector.odd = true;
+  for (int64_t& v : odd_vector.v1)
+    v = i++;
+
+  Vector even_vector;
+  even_vector.odd = false;
+  for (int64_t& v : even_vector.v1)
+    v = --i;
+
+  int sum = ((10 + 1) * 10) / 2;
+  REQUIRE(std::accumulate(std::begin(odd_vector.v1), std::end(odd_vector.v1), 0) == sum);
+  REQUIRE(std::accumulate(std::begin(even_vector.v1), std::end(even_vector.v1), 0) == sum);
+
+  std::string s;
+  std::mutex guard;
+  constexpr size_t _MAX_CONSUMERS_ = 3;
+  constexpr size_t _PUBLISHER_INITIAL_QUEUE_SIZE = 16;
+  constexpr size_t _PUBLISHER_MAX_QUEUE_SIZE = 1024 * 1024;
+  constexpr size_t N = 3000000;
+  constexpr size_t BATCH_NUM = 2;
+  using Queue = SPMCMulticastQueueReliableAdaptiveBounded<Vector, _MAX_CONSUMERS_, BATCH_NUM>;
+  Queue q(_PUBLISHER_INITIAL_QUEUE_SIZE, _PUBLISHER_INITIAL_QUEUE_SIZE);
+
+  size_t from;
+  std::vector<std::thread> consumers;
+  std::atomic_int consumer_joined_num{0};
+
+  TLOG << "\n  " << Catch::getResultCapture().getCurrentTestName() << "\n";
+  for (size_t i = 0; i < _MAX_CONSUMERS_; ++i)
+  {
+    consumers.push_back(std::thread(
+      [&q, i, &guard, N, sum, &consumer_joined_num]()
+      {
+        ConsumerBlocking<Queue> c(q);
+        size_t n = 0;
+        ++consumer_joined_num;
+        auto begin = std::chrono::system_clock::now();
+        while (ConsumeReturnCode::Stopped !=
+               c.consume(
+                 [consumer_id = i, sum, &n](const Vector& r) mutable
+                 {
+                   // interleaving update won't make the sum equal to the target
+                   CHECK(std::accumulate(std::begin(r.v1), std::end(r.v1), 0) == sum);
+                   ++n;
+                 }))
+          ;
+        TLOG << "Consumer [" << i << "]  processed  " << n << " updates\n";
+      }));
+  }
+
+  ProducerSynchronizedContext producer_group;
+  std::thread producer(
+    [&q, &from, &odd_vector, &even_vector, &consumer_joined_num, N, &producer_group]()
+    {
+      while (consumer_joined_num.load() < _MAX_CONSUMERS_)
+        ;
+
+      ProducerBlocking<Queue, ProducerKind::Synchronized> p(q, producer_group);
+      q.start();
+      from = std::chrono::system_clock::now().time_since_epoch().count();
+      size_t n = 1;
+      while (n <= N)
+      {
+        if ((n & 1) == 0)
+        {
+          p.emplace(even_vector);
+        }
+        else
+        {
+          p.emplace(odd_vector);
+        }
+        ++n;
+      }
+
+      q.stop();
+    });
+
+  producer.join();
+  for (auto& c : consumers)
+  {
+    c.join();
+  }
+}
+
 int main(int argc, char** argv) { return Catch::Session().run(argc, argv); }

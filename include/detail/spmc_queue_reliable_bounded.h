@@ -120,7 +120,7 @@ class SPMCMulticastQueueReliableBounded
       do
       {
         new_idx = 1 + old_idx;
-        // host_.producer_ctx_.producer_progress_[p.producer_id_].idx.store(new_idx, std::memory_order_release);
+        host_.producer_ctx_.producer_progress_[p.producer_id_].idx.store(new_idx, std::memory_order_release);
       } while (!producer_idx_.compare_exchange_strong(old_idx, new_idx, std::memory_order_release,
                                                       std::memory_order_acquire));
       return new_idx;

@@ -463,7 +463,6 @@ TEST_CASE("SingleThreaded SPMC throughput test")
     {
       try
       {
-
         ProducerBlocking<Queue> p(q);
         q.start();
         auto begin = std::chrono::system_clock::now();
@@ -695,5 +694,96 @@ TEST_CASE("SingleThreaded Anycast MPMC throughput test")
   TLOG << "\n total_msg_consumed_num=" << actual_msg_consumed_num << "\n";
   CHECK(actual_msg_consumed_num == N);
 }
+
+#ifndef _DISABLE_ADAPTIVE_QUEUE_TEST_
+TEST_CASE("Adaptive SPMC throughput test")
+{
+  std::string s;
+  std::mutex guard;
+  constexpr size_t _MAX_CONSUMERS_ = 3;
+  constexpr size_t _PUBLISHER_INITIAL_QUEUE_SIZE = 1024;
+  constexpr size_t _PUBLISHER_MAX_QUEUE_SIZE = 1024 * 1024;
+  constexpr size_t N = 10000000;
+  using Queue = SPMCMulticastQueueReliableAdaptiveBounded<OrderNonTrivial, _MAX_CONSUMERS_>;
+  Queue q(_PUBLISHER_INITIAL_QUEUE_SIZE, _PUBLISHER_MAX_QUEUE_SIZE);
+
+  size_t from = std::chrono::system_clock::now().time_since_epoch().count();
+  std::vector<std::thread> consumers;
+  std::vector<size_t> totalVols(_MAX_CONSUMERS_, 0);
+  std::atomic_int consumer_joined_num{0};
+
+  TLOG << "\n  " << Catch::getResultCapture().getCurrentTestName() << "\n";
+  for (size_t i = 0; i < _MAX_CONSUMERS_; ++i)
+  {
+    consumers.push_back(std::thread(
+      [&q, i, &guard, N, &consumer_joined_num, &totalVols]()
+      {
+        try
+        {
+          ConsumerBlocking<Queue> c(q);
+          ++consumer_joined_num;
+          auto begin = std::chrono::system_clock::now();
+          size_t n = 0;
+          while (n < N || q.is_stopped())
+          {
+            c.consume(
+              [consumer_id = i, &n, &q, &totalVols](const OrderNonTrivial& r) mutable
+              {
+                totalVols[consumer_id] += r.vol;
+                n = r.id;
+              });
+          }
+
+          REQUIRE(totalVols[i] > 0);
+          std::scoped_lock lock(guard);
+          auto end = std::chrono::system_clock::now();
+          auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
+          auto avg_time_ns = (totalVols[i] ? (nanos.count() / totalVols[i]) : 0);
+          TLOG << "\n Consumer [" << i << "] raw time per one item: " << avg_time_ns << "ns"
+               << " total_time_ms=" << nanos / (1000 * 1000) << " consumed [" << totalVols[i] << " items";
+          CHECK(totalVols[i] == N);
+          CHECK(avg_time_ns < 150);
+        }
+        catch (const std::exception& e)
+        {
+          TLOG << "\n got exception (10)" << e.what();
+        }
+      }));
+  }
+
+  while (consumer_joined_num.load() < _MAX_CONSUMERS_)
+    ;
+
+  std::thread producer(
+    [&q, &consumer_joined_num, N]()
+    {
+      try
+      {
+        ProducerBlocking<Queue> p(q);
+        q.start();
+        auto begin = std::chrono::system_clock::now();
+        size_t n = 1;
+        while (n <= N)
+        {
+          if (p.emplace(OrderNonTrivial{n, 1U, 100.1, 'B'}) == ProduceReturnCode::Published)
+            ++n;
+        }
+      }
+      catch (const std::exception& e)
+      {
+        TLOG << "\n got exception (9)" << e.what();
+      }
+
+      sleep(1);
+      q.stop();
+    });
+
+  producer.join();
+  for (auto& c : consumers)
+  {
+    c.join();
+  }
+}
+#endif
 
 int main(int argc, char** argv) { return Catch::Session().run(argc, argv); }

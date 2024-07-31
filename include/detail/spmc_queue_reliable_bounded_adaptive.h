@@ -30,12 +30,75 @@ class SPMCMulticastQueueReliableAdaptiveBounded
   : public SPMCMulticastQueueAdaptiveBase<T, SPMCMulticastQueueReliableAdaptiveBounded<T, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>,
                                           _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>
 {
+  static constexpr size_t _MAX_PRODUCER_N_ = 1;
+
   struct alignas(64) ConsumerProgress
   {
     std::atomic<size_t> idx;
     std::atomic<size_t> previous_version;
     std::atomic<size_t> queue_idx;
   };
+
+  struct ProducerContext
+  {
+    alignas(64) std::atomic<size_t> producer_idx_;
+    alignas(64) std::atomic<size_t> min_next_consumer_idx_;
+    alignas(64) std::atomic<size_t> min_next_producer_idx_;
+
+    struct alignas(64) ProducerProgress
+    {
+      std::atomic<size_t> idx;
+    };
+
+    std::array<ProducerProgress, _MAX_PRODUCER_N_ + 1> producer_progress_;
+    std::array<std::atomic<bool>, _MAX_PRODUCER_N_ + 1> producer_registry_;
+
+    SPMCMulticastQueueReliableAdaptiveBounded& host_;
+    ProducerContext(SPMCMulticastQueueReliableAdaptiveBounded& host) : host_(host)
+    {
+      for (auto it = std::begin(producer_progress_); it != std::end(producer_progress_); ++it)
+        it->idx.store(PRODUCER_IS_WELCOME, std::memory_order_release);
+
+      std::fill(std::begin(producer_registry_), std::end(producer_registry_), 0 /*unlocked*/);
+
+      producer_idx_.store(std::numeric_limits<size_t>::max(), std::memory_order_release);
+      min_next_consumer_idx_.store(CONSUMER_IS_WELCOME, std::memory_order_release);
+    }
+
+    size_t get_min_next_consumer_idx_cached() const
+    {
+      return min_next_consumer_idx_.load(std::memory_order_acquire);
+    }
+
+    void cache_min_next_consumer_idx(size_t idx)
+    {
+      min_next_consumer_idx_.store(idx, std::memory_order_release);
+    }
+
+    template <class Producer>
+    size_t aquire_idx(Producer& p) requires(_MAX_PRODUCER_N_ == 1)
+    {
+      size_t new_idx = 1 + producer_idx_.load(std::memory_order_acquire);
+      producer_idx_.store(new_idx, std::memory_order_release);
+      return new_idx;
+    }
+
+    template <class Producer>
+    size_t aquire_first_idx(Producer& p) requires(_MAX_PRODUCER_N_ == 1)
+    {
+      size_t new_idx;
+      size_t old_idx = producer_idx_.load(std::memory_order_acquire);
+      do
+      {
+        new_idx = 1 + old_idx;
+        host_.producer_ctx_.producer_progress_[p.producer_id_].idx.store(PRODUCER_JOINED, std::memory_order_release);
+      } while (!producer_idx_.compare_exchange_strong(old_idx, new_idx, std::memory_order_release,
+                                                      std::memory_order_acquire));
+      return new_idx;
+    }
+  };
+
+  ProducerContext producer_ctx_;
 
   using ConsumerProgressArray = std::array<ConsumerProgress, _MAX_CONSUMER_N_ + 1>;
   using ConsumerRegistryArray = std::array<std::atomic<bool>, _MAX_CONSUMER_N_ + 1>;
@@ -53,6 +116,7 @@ public:
     SPMCMulticastQueueAdaptiveBase<T, SPMCMulticastQueueReliableAdaptiveBounded, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>;
   using NodeAllocTraits = typename Base::NodeAllocTraits;
   using Node = typename Base::Node;
+  using ProducerTicket = typename Base::ProducerTicket;
   using ConsumerTicket = typename Base::ConsumerTicket;
   using type = typename Base::type;
   using Base::Base;
@@ -64,7 +128,7 @@ public:
 
   SPMCMulticastQueueReliableAdaptiveBounded(std::size_t initial_sz, std::size_t max_size,
                                             const Allocator& alloc = Allocator())
-    : Base(initial_sz, max_size, alloc), consumers_pending_attach_(0), max_consumer_id_(0)
+    : Base(initial_sz, max_size, alloc), producer_ctx_(*this), consumers_pending_attach_(0), max_consumer_id_(0)
   {
     for (auto it = std::begin(consumers_progress_); it != std::end(consumers_progress_); ++it)
       it->idx.store(CONSUMER_IS_WELCOME, std::memory_order_release);
@@ -186,6 +250,63 @@ public:
     return false;
   }
 
+  template <class Producer>
+  ProducerTicket attach_producer(Producer& p)
+  {
+    for (size_t i = 1; i < _MAX_PRODUCER_N_ + 1; ++i)
+    {
+      std::atomic<bool>& locker = this->producer_ctx_.producer_registry_.at(i);
+      bool is_locked = locker.load(std::memory_order_acquire);
+      if (!is_locked)
+      {
+        if (locker.compare_exchange_strong(is_locked, true, std::memory_order_release, std::memory_order_relaxed))
+        {
+          // let's wait for producer to consumer our positions from which we
+          // shall start safely consuming
+          size_t stopped = is_stopped();
+          if (stopped)
+          {
+            detach_producer(i);
+            return {0, 0, ProducerAttachReturnCode::Stopped};
+          }
+
+          return {i, this->items_per_batch_, ProducerAttachReturnCode::Attached};
+        } // else someone stole the locker just before us!
+      }
+    }
+
+    // not enough space for the new consumer!
+    return {0, 0, ProducerAttachReturnCode::ProducerLimitReached};
+  }
+
+  bool detach_producer(size_t producer_id)
+  {
+    std::atomic<bool>& locker = this->producer_ctx_.producer_registry_.at(producer_id);
+    bool is_locked = locker.load(std::memory_order_acquire);
+    if (is_locked)
+    {
+      this->producer_ctx_.producer_progress_.at(producer_id).idx.store(PRODUCER_IS_WELCOME, std::memory_order_release);
+      if (locker.compare_exchange_strong(is_locked, false, std::memory_order_release, std::memory_order_relaxed))
+      {
+        // this->consumers_pending_dettach_.fetch_add(1, std::memory_order_release);
+        //  technically even possible that while we unregistered it another
+        //  thread, another consumer stole our slot legitimately and we just
+        //  removed it from the registery, effectively leaking it...
+        //  so unlocked the same consumer on multiple threads is really a bad
+        //  idea
+        return true;
+      }
+      else
+      {
+        throw std::runtime_error(
+          "unregister_consumer called on another thread "
+          "for the same consumer at the same time!");
+      }
+    }
+
+    return false;
+  }
+
   size_t try_accept_new_consumer(size_t i, size_t original_idx, size_t previous_version)
   {
     size_t consumer_next_idx = this->consumers_progress_[i].idx.load(std::memory_order_relaxed);
@@ -206,6 +327,18 @@ public:
     return consumer_next_idx;
   }
 
+  template <class Producer>
+  size_t aquire_idx(Producer& p)
+  {
+    return producer_ctx_.aquire_idx(p);
+  }
+
+  template <class Producer>
+  size_t aquire_first_idx(Producer& p)
+  {
+    return producer_ctx_.aquire_first_idx(p);
+  }
+
   template <class Producer, class... Args, bool blocking = Producer::blocking_v>
   ProduceReturnCode emplace(size_t original_idx, Producer& producer, Args&&... args)
   {
@@ -216,7 +349,7 @@ public:
 
     int i = 0;
     size_t idx = original_idx & this->idx_mask_;
-    size_t min_next_consumer_idx = producer.get_min_next_consumer_idx_cached();
+    size_t min_next_consumer_idx = producer_ctx_.get_min_next_consumer_idx_cached();
     size_t back_buffer_idx = this->back_buffer_idx_.load(std::memory_order_acquire);
     bool first_time_publish = min_next_consumer_idx == CONSUMER_IS_WELCOME;
     Node& current_node = this->nodes_[back_buffer_idx][idx];
@@ -239,7 +372,7 @@ public:
         }
       }
 
-      producer.cache_min_next_consumer_idx(min_next_consumer_idx_local);
+      producer_ctx_.cache_min_next_consumer_idx(min_next_consumer_idx_local);
       first_time_publish = min_next_consumer_idx == CONSUMER_IS_WELCOME;
       no_free_slot = !first_time_publish &&
         (original_idx - min_next_consumer_idx_local >= this->current_sz_) && !free_node;
