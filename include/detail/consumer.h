@@ -123,6 +123,8 @@ protected:
       }
 
       previous_version_ = ticket.previous_version; // it will be properly recalculated later on by consumers!
+      // std::cout << "\n consumer=" << consumer_id_ << " idx=" << consumer_next_idx_
+      //           << " previous_verison=" << previous_version_;
     }
 
     return ticket.ret_code;

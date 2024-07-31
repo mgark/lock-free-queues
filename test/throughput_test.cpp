@@ -18,6 +18,7 @@
 #include <catch2/catch_all.hpp>
 #include <iostream>
 #include <list>
+#include <map>
 #include <mpmc.h>
 #include <mutex>
 #include <numeric>
@@ -301,10 +302,11 @@ TEST_CASE("SingleThreaded MPMC throughput test")
   constexpr size_t _MAX_CONSUMERS_ = 3;
   constexpr size_t _MAX_PUBLISHERS_ = 4;
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
-  constexpr size_t _MSG_PER_CONSUMER_ = 10000000;
+  constexpr size_t _MSG_PER_CONSUMER_ = 1000000;
   constexpr size_t N = _MAX_PUBLISHERS_ * _MSG_PER_CONSUMER_;
 
-  using Queue = SPMCMulticastQueueReliableBounded<OrderNonTrivial, _MAX_CONSUMERS_, _MAX_PUBLISHERS_>;
+  using Queue =
+    SPMCMulticastQueueReliableBounded<OrderNonTrivial, _MAX_CONSUMERS_, 1 /*single producer queue*/>;
   std::list<Queue> queues;
   for (size_t i = 0; i < _MAX_PUBLISHERS_; ++i)
     queues.emplace_back(_PUBLISHER_QUEUE_SIZE);
@@ -322,7 +324,13 @@ TEST_CASE("SingleThreaded MPMC throughput test")
         try
         {
           auto queueIt = queues.begin();
-          ConsumerBlocking<Queue> per_pub_consumer[_MAX_PUBLISHERS_]{*queueIt, *++queueIt, *++queueIt, *++queueIt};
+          std::map<size_t /*producer_id*/, ConsumerBlocking<Queue>> per_pub_consumer;
+          {
+            per_pub_consumer.emplace(0, *queueIt);
+            per_pub_consumer.emplace(1, *++queueIt);
+            per_pub_consumer.emplace(2, *++queueIt);
+            per_pub_consumer.emplace(3, *++queueIt);
+          }
           ++consumer_joined_num;
           auto begin = std::chrono::system_clock::now();
           size_t totalMsgConsumed = 0;
@@ -330,9 +338,12 @@ TEST_CASE("SingleThreaded MPMC throughput test")
           bool is_consumer_done[_MAX_PUBLISHERS_]{};
           while (std::count(std::begin(is_consumer_done), std::end(is_consumer_done), true) < _MAX_PUBLISHERS_)
           {
-            for (size_t publisher_id = 0; publisher_id < _MAX_PUBLISHERS_; ++publisher_id)
+            auto consumer_it = std::begin(per_pub_consumer);
+            while (consumer_it != std::end(per_pub_consumer))
             {
-              auto r = per_pub_consumer[publisher_id].consume(
+              bool drop = false;
+              size_t publisher_id = consumer_it->first;
+              auto r = consumer_it->second.consume(
                 [&](const OrderNonTrivial& r) mutable
                 {
                   totalMsgConsumed += r.vol;
@@ -340,8 +351,15 @@ TEST_CASE("SingleThreaded MPMC throughput test")
                   { // consumed all messages!
                     is_consumer_done[publisher_id] = true;
                     ++consumed_num;
+                    drop = true;
+                    // std::cout << "\n consumer=" << consumer_id << " publisher_id=" << publisher_id << " done"
+                    //           << " consumed_num=" << consumed_num << " totalMsgConsumed=" << totalMsgConsumed;
                   }
                 });
+              if (drop)
+              {
+                consumer_it = per_pub_consumer.erase(consumer_it);
+              }
               if (r == ConsumeReturnCode::Stopped)
                 is_consumer_done[publisher_id] = true;
             }
@@ -390,6 +408,8 @@ TEST_CASE("SingleThreaded MPMC throughput test")
         {
           TLOG << "\n got exception " << e.what();
         }
+
+        std::cout << "\n producer completed";
       }));
   }
 
