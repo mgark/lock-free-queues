@@ -109,7 +109,7 @@ class SPMCMulticastQueueReliableAdaptiveBounded
   // these variables change somewhat infrequently
   alignas(64) std::atomic<int> consumers_pending_attach_;
   std::atomic<size_t> max_consumer_id_;
-  std::atomic<size_t> prev_version_;
+  size_t prev_version_;
 
 public:
   using Base =
@@ -128,7 +128,11 @@ public:
 
   SPMCMulticastQueueReliableAdaptiveBounded(std::size_t initial_sz, std::size_t max_size,
                                             const Allocator& alloc = Allocator())
-    : Base(initial_sz, max_size, alloc), producer_ctx_(*this), consumers_pending_attach_(0), max_consumer_id_(0)
+    : Base(initial_sz, max_size, alloc),
+      producer_ctx_(*this),
+      consumers_pending_attach_(0),
+      max_consumer_id_(0),
+      prev_version_(0)
   {
     for (auto it = std::begin(consumers_progress_); it != std::end(consumers_progress_); ++it)
       it->idx.store(CONSUMER_IS_WELCOME, std::memory_order_release);
@@ -354,9 +358,7 @@ public:
     bool first_time_publish = min_next_consumer_idx == CONSUMER_IS_WELCOME;
     Node& current_node = this->nodes_[back_buffer_idx][idx];
     size_t version = current_node.version_.load(std::memory_order_acquire); // be carefull not gonna work with syncnronized producers!
-    bool free_node =
-      (back_buffer_idx > 0 &&
-       this->nodes_[back_buffer_idx - 1][0].version_.load(std::memory_order_acquire) == version); // TODO: rework!
+    bool free_node = prev_version_ == version;
     bool no_free_slot = first_time_publish ||
       (original_idx - min_next_consumer_idx >= this->current_sz_ && !free_node);
     while (no_free_slot || this->consumers_pending_attach_.load(std::memory_order_acquire))
@@ -401,8 +403,9 @@ public:
           std::uninitialized_value_construct_n(this->nodes_[back_buffer_idx], new_sz);
 
           // now it is super important to continue previous version in the new queue
+          prev_version_ = version;
           for (Node* node = this->nodes_[back_buffer_idx]; node != this->nodes_[back_buffer_idx] + new_sz; ++node)
-            node->version_ = version;
+            node->version_ = prev_version_;
 
           this->increment_queue_size(new_sz); // now we make new producer queue visible to the consumers!
           idx = original_idx & this->idx_mask_; // index needs to be re-adjusted as the mask changed!
