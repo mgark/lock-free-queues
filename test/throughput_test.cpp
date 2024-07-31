@@ -385,8 +385,6 @@ TEST_CASE("SingleThreaded MPMC throughput test")
             if (p.emplace(OrderNonTrivial{n, 1U, 100.1, 'B'}) == ProduceReturnCode::Published)
               ++n;
           }
-
-          q.stop();
         }
         catch (const std::exception& e)
         {
@@ -724,7 +722,7 @@ TEST_CASE("Adaptive SPMC throughput test")
           ++consumer_joined_num;
           auto begin = std::chrono::system_clock::now();
           size_t n = 0;
-          while (n < N || q.is_stopped())
+          while (n < N)
           {
             c.consume(
               [consumer_id = i, &n, &q, &totalVols](const OrderNonTrivial& r) mutable
@@ -773,9 +771,6 @@ TEST_CASE("Adaptive SPMC throughput test")
       {
         TLOG << "\n got exception (9)" << e.what();
       }
-
-      sleep(1);
-      q.stop();
     });
 
   producer.join();

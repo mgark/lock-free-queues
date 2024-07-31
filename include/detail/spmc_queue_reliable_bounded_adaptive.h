@@ -468,7 +468,7 @@ public:
   {
     if (consumer.previous_version_ < version)
     {
-      if (idx + 1 == consumer.current_sz_)
+      if (idx + 1 == consumer.n_)
       { // need to
         // rollover
         consumer.previous_version_ = version;
