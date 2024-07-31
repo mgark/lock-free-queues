@@ -258,14 +258,13 @@ TEST_CASE("SPMC Synchronized queue stress test to detect race conditions")
       }));
   }
 
-  ProducerSynchronizedContext producer_group;
   std::thread producer(
-    [&q, &from, &odd_vector, &even_vector, &consumer_joined_num, N, &producer_group]()
+    [&q, &from, &odd_vector, &even_vector, &consumer_joined_num, N]()
     {
       while (consumer_joined_num.load() < _MAX_CONSUMERS_)
         ;
 
-      ProducerBlocking<Queue, ProducerKind::Synchronized> p(q, producer_group);
+      ProducerBlocking<Queue> p(q);
       q.start();
       from = std::chrono::system_clock::now().time_since_epoch().count();
       size_t n = 1;
@@ -353,14 +352,13 @@ TEST_CASE("Adaptive SPMC  queue stress test to detect race conditions")
       }));
   }
 
-  ProducerSynchronizedContext producer_group;
   std::thread producer(
-    [&q, &from, &odd_vector, &even_vector, &consumer_joined_num, N, &producer_group]()
+    [&q, &from, &odd_vector, &even_vector, &consumer_joined_num, N]()
     {
       while (consumer_joined_num.load() < _MAX_CONSUMERS_)
         ;
 
-      ProducerBlocking<Queue, ProducerKind::Synchronized> p(q, producer_group);
+      ProducerBlocking<Queue> p(q);
       q.start();
       from = std::chrono::system_clock::now().time_since_epoch().count();
       size_t n = 1;

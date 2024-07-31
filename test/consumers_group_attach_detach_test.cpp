@@ -125,6 +125,7 @@ TEST_CASE("Multi-threaded Anycast MPMC attach detach test")
   constexpr size_t _MAX_PUBLISHERS_ = 4;
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 64;
   constexpr size_t _ATTACH_DETACH_ITERATIONS_ = 10000;
+  constexpr size_t _N_PER_ITERATION_ = 513;
   using Queue = SPMCMulticastQueueReliableBounded<OrderNonTrivial, _MAX_CONSUMERS_, _MAX_PUBLISHERS_>;
 
   std::string s;
@@ -164,7 +165,7 @@ TEST_CASE("Multi-threaded Anycast MPMC attach detach test")
 
             int j = 0;
             size_t msg_consumed = 0;
-            while (j < 5000)
+            while (j < _N_PER_ITERATION_)
             {
               auto r = c.consume([&](const OrderNonTrivial& r) mutable { ++msg_consumed; });
               if (r == ConsumeReturnCode::Consumed)
@@ -176,8 +177,6 @@ TEST_CASE("Multi-threaded Anycast MPMC attach detach test")
                 break;
               }
             }
-
-            // CHECK(msg_consumed > 0);
           }
         }
         catch (const std::exception& e)
@@ -188,18 +187,17 @@ TEST_CASE("Multi-threaded Anycast MPMC attach detach test")
   }
 
   std::vector<std::thread> producers;
-  ProducerSynchronizedContext producer_group_1;
-  ProducerSynchronizedContext producer_group_2;
-  queues[0].start();
-  queues[1].start();
+  for (auto& q : queues)
+    q.start();
+
   for (size_t i = 1; i <= _MAX_PUBLISHERS_; ++i)
   {
     producers.emplace_back(std::thread(
-      [&queues, &producer_group_1, &producer_group_2]()
+      [&queues]()
       {
         try
         {
-          ProducerBlocking<Queue, ProducerKind::Synchronized> p1(queues[0], producer_group_1);
+          ProducerBlocking<Queue> p1(queues[0]);
 
           size_t n = 1;
           while (1)
@@ -218,11 +216,11 @@ TEST_CASE("Multi-threaded Anycast MPMC attach detach test")
   for (size_t i = 1; i <= _MAX_PUBLISHERS_; ++i)
   {
     producers.emplace_back(std::thread(
-      [&queues, &producer_group_2]()
+      [&queues]()
       {
         try
         {
-          ProducerBlocking<Queue, ProducerKind::Synchronized> p2(queues[1], producer_group_2);
+          ProducerBlocking<Queue> p2(queues[1]);
 
           size_t n = 1;
           while (1)
@@ -242,8 +240,8 @@ TEST_CASE("Multi-threaded Anycast MPMC attach detach test")
     c.join();
 
   TLOG << "\n all consumers are done\n";
-  queues[0].stop();
-  queues[1].stop();
+  for (auto& q : queues)
+    q.stop();
 
   for (auto& p : producers)
     p.join();

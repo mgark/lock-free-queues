@@ -35,14 +35,13 @@ struct Order
 
 int main()
 {
-  ProducerSynchronizedContext producer_group;
   using Queue = SPMCMulticastQueueReliableBounded<Order, 2, 2>;
   Queue q1(8);
 
   constexpr bool blocking = true;
   ConsumerBlocking<Queue> c1{q1};
-  ProducerBlocking<Queue, ProducerKind::Synchronized> p1(q1, producer_group);
-  ProducerBlocking<Queue, ProducerKind::Synchronized> p2(q1, producer_group);
+  ProducerBlocking<Queue> p1(q1);
+  ProducerBlocking<Queue> p2(q1);
   q1.start();
   {
     p1.emplace(1u, 1u, 100.0, 'A');

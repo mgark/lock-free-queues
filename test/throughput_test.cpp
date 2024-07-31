@@ -247,7 +247,6 @@ TEST_CASE("Synchronized MPMC throughput test")
   while (consumer_joined_num.load() < _MAX_CONSUMERS_)
     ;
 
-  ProducerSynchronizedContext producer_group;
   std::vector<std::thread> producers;
   std::atomic_int publishers_completed_num{0};
   for (size_t producer_id = 0; producer_id < _MAX_PUBLISHERS_; ++producer_id)
@@ -257,7 +256,7 @@ TEST_CASE("Synchronized MPMC throughput test")
       {
         try
         {
-          ProducerBlocking<Queue, ProducerKind::Synchronized> p(queue, producer_group);
+          ProducerBlocking<Queue> p(queue);
           queue.start();
 
           auto begin = std::chrono::system_clock::now();

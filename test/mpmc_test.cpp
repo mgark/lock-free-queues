@@ -187,12 +187,11 @@ TEST_CASE("Synchronized Blocking MPMC functional test")
   Queue q1(8);
 
   constexpr bool blocking = true;
-  ConsumerBlocking<Queue> c1 = {q1};
-  ConsumerBlocking<Queue> c2 = {q1};
+  ConsumerBlocking<Queue> c1{q1};
+  ConsumerBlocking<Queue> c2{q1};
 
-  ProducerSynchronizedContext producer_group;
-  ProducerBlocking<Queue, ProducerKind::Synchronized> p1(q1, producer_group);
-  ProducerBlocking<Queue, ProducerKind::Synchronized> p2(q1, producer_group);
+  ProducerBlocking<Queue> p1(q1);
+  ProducerBlocking<Queue> p2(q1);
 
   q1.start();
   {
@@ -222,9 +221,8 @@ TEST_CASE("Synchronized Non-Blocking MPMC functional test")
   ConsumerNonBlocking<Queue> c1 = {q1};
   ConsumerNonBlocking<Queue> c2 = {q1};
 
-  ProducerSynchronizedContext producer_group;
-  ProducerNonBlocking<Queue, ProducerKind::Synchronized> p1(q1, producer_group);
-  ProducerNonBlocking<Queue, ProducerKind::Synchronized> p2(q1, producer_group);
+  ProducerNonBlocking<Queue> p1(q1);
+  ProducerNonBlocking<Queue> p2(q1);
 
   q1.start();
   {

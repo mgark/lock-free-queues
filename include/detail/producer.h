@@ -21,66 +21,13 @@
 #include <limits>
 #include <memory>
 
-struct alignas(64) ProducerSynchronizedContext
-{
-  std::atomic<size_t> producer_idx_;
-  std::atomic<size_t> min_next_consumer_idx_;
-
-  ProducerSynchronizedContext()
-  {
-    producer_idx_.store(0, std::memory_order_release);
-    min_next_consumer_idx_.store(CONSUMER_IS_WELCOME, std::memory_order_release);
-  }
-
-  // size_t min_producer_idx_cached() const { return producer_idx_; }
-  size_t get_min_next_consumer_idx_cached() const
-  {
-    return min_next_consumer_idx_.load(std::memory_order_acquire);
-  }
-
-  void cache_min_next_consumer_idx(size_t idx)
-  {
-    min_next_consumer_idx_.store(idx, std::memory_order_release);
-  }
-
-  template <class Producer>
-  size_t aquire_idx(Producer& p)
-  {
-    return producer_idx_.fetch_add(1, std::memory_order_release);
-  }
-  void release_idx() { producer_idx_.fetch_sub(1, std::memory_order_release); }
-};
-
-struct alignas(64) ProducerSingleThreadedContext
-{
-  size_t producer_idx_{std::numeric_limits<size_t>::max()}; // first increment will make it 0!
-  size_t min_next_consumer_idx_{CONSUMER_IS_WELCOME};
-
-  size_t get_min_next_consumer_idx_cached() const { return min_next_consumer_idx_; }
-  void cache_min_next_consumer_idx(size_t idx) { min_next_consumer_idx_ = idx; }
-
-  size_t min_producer_idx_cached() const { return producer_idx_; }
-
-  template <class Producer>
-  size_t aquire_idx(Producer& p)
-  {
-    // first increment will make it 0!
-    return ++producer_idx_;
-  }
-};
-
-// TODO: Synchronized context can only work with one queue so we must ensure through interface that is enforced!
-template <class Queue, ProducerKind producerKind, class Derived>
+template <class Queue, class Derived>
 class ProducerBase
 {
 protected:
   Queue* q_{nullptr};
   friend Queue;
 
-  using ProducerContext =
-    std::conditional_t<producerKind == ProducerKind::SingleThreaded, ProducerSingleThreadedContext, ProducerSynchronizedContext&>;
-
-  ProducerContext ctx_;
   size_t last_producer_idx_{PRODUCER_IS_WELCOME};
   size_t items_per_batch_;
   size_t producer_id_{0};
@@ -96,26 +43,13 @@ protected:
 #endif
 
 public:
-  static constexpr auto producer_kind = producerKind;
-
 #ifdef _TRACE_STATS_
   Stats& stats() { return stats_; }
   const Stats& stats() const { return stats_; }
 #endif
 
   ProducerBase() = default;
-  ProducerBase(Queue& q) requires(producerKind == ProducerKind::SingleThreaded)
-  {
-    if (ProducerAttachReturnCode::Attached != attach(q))
-    {
-      throw std::runtime_error(
-        "could not attach a producer to the queue - because either there is no space for more "
-        "consumers / queue has been stopped");
-    }
-  }
-  // TODO: remove this!
-  ProducerBase(Queue& q, ProducerSynchronizedContext& ctx) requires(producerKind == ProducerKind::Synchronized)
-    : ctx_(ctx)
+  ProducerBase(Queue& q)
   {
     if (ProducerAttachReturnCode::Attached != attach(q))
     {
@@ -183,20 +117,18 @@ public:
   }
 };
 
-template <class Queue, ProducerKind producerKind = ProducerKind::SingleThreaded>
-class alignas(64) ProducerBlocking
-  : public ProducerBase<Queue, producerKind, ProducerBlocking<Queue, producerKind>>
+template <class Queue>
+class alignas(64) ProducerBlocking : public ProducerBase<Queue, ProducerBlocking<Queue>>
 {
 public:
   static constexpr bool blocking_v = true;
-  using ProducerBase<Queue, producerKind, ProducerBlocking<Queue, producerKind>>::ProducerBase;
+  using ProducerBase<Queue, ProducerBlocking<Queue>>::ProducerBase;
 };
 
-template <class Queue, ProducerKind producerKind = ProducerKind::SingleThreaded>
-class alignas(64) ProducerNonBlocking
-  : public ProducerBase<Queue, producerKind, ProducerNonBlocking<Queue, producerKind>>
+template <class Queue>
+class alignas(64) ProducerNonBlocking : public ProducerBase<Queue, ProducerNonBlocking<Queue>>
 {
 public:
   static constexpr bool blocking_v = false;
-  using ProducerBase<Queue, producerKind, ProducerNonBlocking<Queue, producerKind>>::ProducerBase;
+  using ProducerBase<Queue, ProducerNonBlocking<Queue>>::ProducerBase;
 };

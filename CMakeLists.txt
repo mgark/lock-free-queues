@@ -13,5 +13,5 @@ include(CTest)
 include(Catch)
 
 add_subdirectory(test)
-add_subdirectory(benchmark)
+add_subdirectory(micro_benchmark)
 add_subdirectory(example)
