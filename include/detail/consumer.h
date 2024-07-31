@@ -123,8 +123,6 @@ protected:
       }
 
       previous_version_ = ticket.previous_version; // it will be properly recalculated later on by consumers!
-      // std::cout << "\n consumer=" << consumer_id_ << " idx=" << consumer_next_idx_
-      //           << " previous_verison=" << previous_version_;
     }
 
     return ticket.ret_code;
@@ -420,8 +418,6 @@ struct alignas(64) AnycastConsumerGroup
       {
         consumers[i].detach();
         this->queues[i].store(nullptr, std::memory_order_release);
-        // std::cout << "\n queue = " << i << " detached \n";
-        //  It shall be safe to update max consumer idx as the attach function would restore max consumer idx shall one appear right after.
         auto new_max_queue_id = MAX_SIZE;
         while (new_max_queue_id > 0)
         {
@@ -437,10 +433,6 @@ struct alignas(64) AnycastConsumerGroup
 
         this->max_idx.store(new_max_queue_id - 1 /*has to be prev idx */, std::memory_order_release);
         return true;
-      }
-      else
-      {
-        // std::cout << "\n starnge queuue at idx =" << i << " not found \n";
       }
     }
 
