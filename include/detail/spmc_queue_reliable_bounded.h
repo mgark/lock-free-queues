@@ -561,11 +561,6 @@ public:
   ConsumeReturnCode consume_by_func(size_t idx, size_t& queue_idx, Node& node, size_t version,
                                     C& consumer, F&& f)
   {
-    if (consumer.is_slow_consumer())
-    {
-      return ConsumeReturnCode::SlowConsumer;
-    }
-
     if (consumer.previous_version_ < version)
     {
       std::forward<F>(f)(node.storage_);

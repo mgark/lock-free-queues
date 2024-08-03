@@ -133,7 +133,6 @@ TEST_CASE("Multi-threaded Anycast MPMC attach detach test")
   std::deque<Queue> queues;
   queues.emplace_back(_PUBLISHER_QUEUE_SIZE);
   queues.emplace_back(_PUBLISHER_QUEUE_SIZE);
-  // Queue queue2(_PUBLISHER_QUEUE_SIZE);
 
   AnycastConsumerGroup<Queue> consumer_group({std::to_address(&queues[0]), std::to_address(&queues[1])});
   std::vector<std::thread> consumers;
@@ -155,7 +154,6 @@ TEST_CASE("Multi-threaded Anycast MPMC attach detach test")
 
             if (attach)
             {
-              // consumer_group.detach(std::to_address(&queue));
               consumer_group.attach(std::to_address(&queues[queue_idx]));
             }
             else

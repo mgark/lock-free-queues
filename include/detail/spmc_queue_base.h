@@ -57,7 +57,7 @@ protected:
   using NodeAllocTraits = std::allocator_traits<NodeAllocator>;
   static_assert(std::is_default_constructible_v<Node>, "Node must be default constructible");
 
-  // these variables pretty much don't change throug the lifetime of the queue
+  // these variables pretty much don't change through the lifetime of the queue
   size_t n_;
   size_t items_per_batch_;
   size_t idx_mask_;
