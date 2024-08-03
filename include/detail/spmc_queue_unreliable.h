@@ -100,12 +100,12 @@ public:
   template <class Consumer>
   ConsumerTicket attach_consumer(Consumer& c)
   {
-    // we can have as many as consumers as possibliy can since the conflated queue does not specifically track consumers
+    // we can have as many as consumers as possibly can since the conflated queue does not specifically track consumers
     return {this->size(), 0, 0 /*does not matter basically*/, std::numeric_limits<size_t>::max(), 0, 0, ConsumerAttachReturnCode::Attached};
   }
 
   /*
-    Return value: true - given consumer was locked and now it has been unlcoked
+    Return value: true - given consumer was locked and now it has been unlocked
                   false - given consumer was already unlocked
   */
   bool detach_consumer(size_t consumer_id) { return true; }
@@ -134,8 +134,8 @@ public:
     {
       size_t version = node.version_.load(std::memory_order_relaxed);
       node.version_.store(version + 1, std::memory_order_relaxed); // WARNING! indicating that write is in-progress
-      std::atomic_thread_fence(std::memory_order_release); // again it is not striclty standard compliant, but will work on
-      //  x86. This fence prevents stores preceeding it to-reorder with the writes following it, so it means if reader would see
+      std::atomic_thread_fence(std::memory_order_release); // again it is not strictly standard compliant, but will work on
+      //  x86. This fence prevents stores preceding it to-reorder with the writes following it, so it means if reader would see
       //  even a single bit of the newly created object, ***it would have to see a version incremented above***!
       void* storage = node.storage_;
       NodeAllocTraits::construct(this->alloc_, static_cast<T*>(storage), std::forward<Args>(args)...);
@@ -155,9 +155,9 @@ public:
       std::byte tmp[sizeof(T)];
       std::memcpy(tmp, node.storage_, sizeof(T));
       // WARNING! because we don't read atomic, it is not technically standard compliant, but
-      // on x86 we get away since the acq fence below prohibts by CPU and compiler to re-order Loads
-      // preceeding the fence and loads following it. This implies that if any bit of the object
-      // gonna be read, its new version would be read as well so that we can detect it if the
+      // on x86 we get away since the acq fence below prohibits by CPU and compiler to re-order
+      // Loads preceding the fence and loads following it. This implies that if any bit of the
+      // object gonna be read, its new version would be read as well so that we can detect it if the
       // producer could warp around and modify our object while we were reading it
       std::atomic_thread_fence(std::memory_order_acquire);
       size_t recent_version = node.version_.load(std::memory_order_relaxed);
