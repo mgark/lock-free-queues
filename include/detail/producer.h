@@ -101,7 +101,7 @@ public:
     {
       this->last_producer_idx_ = this->q_->aquire_first_idx(static_cast<Derived&>(*this));
     }
-    else if (0 == this->last_producer_idx_)
+    else if (NEXT_PRODUCER_IDX_NEEDED == this->last_producer_idx_)
     {
       this->last_producer_idx_ = this->q_->aquire_idx(static_cast<Derived&>(*this));
     }
@@ -110,7 +110,7 @@ public:
                                std::forward<Args>(args)...);
     if (ProduceReturnCode::Published == r || ProduceReturnCode::SlowPublisher == r)
     {
-      this->last_producer_idx_ = 0;
+      this->last_producer_idx_ = NEXT_PRODUCER_IDX_NEEDED;
     }
 
     return r;

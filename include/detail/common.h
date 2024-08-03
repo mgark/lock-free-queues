@@ -91,6 +91,7 @@ constexpr size_t PRODUCER_IS_WELCOME = std::numeric_limits<size_t>::max();
 constexpr size_t PRODUCER_JOIN_REQUESTED = PRODUCER_IS_WELCOME - 1;
 constexpr size_t PRODUCER_JOIN_INPROGRESS = PRODUCER_JOIN_REQUESTED - 2;
 constexpr size_t PRODUCER_JOINED = PRODUCER_JOIN_INPROGRESS - 3;
+constexpr size_t NEXT_PRODUCER_IDX_NEEDED = PRODUCER_JOINED - 4;
 
 class QueueStoppedExp : public std::exception
 {
