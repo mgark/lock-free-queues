@@ -49,8 +49,8 @@ public:
 protected:
   struct Node
   {
-    std::atomic<size_t> version_{0};
     alignas(T) std::byte storage_[sizeof(T)];
+    std::atomic<size_t> version_{0};
   };
 
   using NodeAllocator = typename std::allocator_traits<Allocator>::template rebind_alloc<Node>;

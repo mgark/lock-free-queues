@@ -92,8 +92,11 @@ class SPMCMulticastQueueReliableBounded
     template <class Producer>
     size_t aquire_idx(Producer& p) requires(_MAX_PRODUCER_N_ == 1)
     {
-      size_t new_idx = 1 + producer_idx_.load(std::memory_order_acquire);
-      producer_idx_.store(new_idx, std::memory_order_release);
+      // for single producer relaxed ordering should be enough since this would be
+      // called after first successful publishing already done by this producer which
+      // would establish the right ordering with previous producer
+      size_t new_idx = 1 + producer_idx_.load(std::memory_order_relaxed);
+      producer_idx_.store(new_idx, std::memory_order_relaxed);
       return new_idx;
     }
 
@@ -135,9 +138,6 @@ class SPMCMulticastQueueReliableBounded
       return aquire_idx(p);
     }
   };
-
-  // using ProducerContext =
-  //   std::conditional_t<_MAX_PRODUCER_N_ == 1, ProducerSingleThreadedContext, ProducerSynchronizedContext&>;
 
   ProducerContext producer_ctx_;
 
