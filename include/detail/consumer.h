@@ -64,11 +64,18 @@ public:
   ~ConsumerBase() { detach(); }
 
   ConsumerAttachReturnCode attach(Queue& q) { return do_attach(std::to_address(&q)); }
+
   bool detach()
   {
     if (q_)
     {
-      q_->detach_consumer(consumer_id_);
+      if (!q_->detach_consumer(consumer_id_))
+      {
+        throw DetachConsumerExp(std::string("failed to detach producer [")
+                                  .append(std::to_string(this->consumer_id_).append("]"))
+                                  .c_str());
+      }
+
       q_ = nullptr;
       return true;
     }

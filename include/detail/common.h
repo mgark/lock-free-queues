@@ -101,6 +101,12 @@ class SlowConsumerExp : public std::exception
 {
 };
 
+class DetachConsumerExp : public std::runtime_error
+{
+public:
+  using std::runtime_error::runtime_error;
+};
+
 template <size_t N>
 constexpr auto calc_power_of_two()
 {

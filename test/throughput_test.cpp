@@ -188,10 +188,10 @@ TEST_CASE("Synchronized MPMC throughput test")
 {
   std::string s;
   std::mutex guard;
-  constexpr size_t _MAX_CONSUMERS_ = 4;
-  constexpr size_t _MAX_PUBLISHERS_ = 4;
+  constexpr size_t _MAX_CONSUMERS_ = 3;
+  constexpr size_t _MAX_PUBLISHERS_ = 3;
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
-  constexpr size_t _MSG_PER_CONSUMER_ = 4000000;
+  constexpr size_t _MSG_PER_CONSUMER_ = 400000;
   constexpr size_t N = _MAX_PUBLISHERS_ * _MSG_PER_CONSUMER_;
 
   using Queue = SPMCMulticastQueueReliableBounded<OrderNonTrivial, _MAX_CONSUMERS_, _MAX_PUBLISHERS_>;

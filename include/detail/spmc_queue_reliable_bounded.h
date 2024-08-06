@@ -53,8 +53,8 @@ class SPMCMulticastQueueReliableBounded
       std::atomic<size_t> idx;
     };
 
-    std::array<ProducerProgress, _MAX_PRODUCER_N_ + 1> producer_progress_;
-    alignas(64) std::array<std::atomic<bool>, _MAX_PRODUCER_N_ + 1> producer_registry_;
+    std::array<ProducerProgress, _MAX_PRODUCER_N_> producer_progress_;
+    alignas(64) std::array<std::atomic<bool>, _MAX_PRODUCER_N_> producer_registry_;
     alignas(64) Me& host_;
 
     ProducerContext(Me& host) : host_(host)
@@ -150,7 +150,7 @@ class SPMCMulticastQueueReliableBounded
   // these variables change somewhat infrequently
   alignas(64) std::atomic<int> consumers_pending_attach_;
   std::atomic<size_t> next_max_consumer_id_;
-  std::atomic<size_t> max_producer_id_;
+  std::atomic<size_t> next_max_producer_id_;
 
 public:
   using Base =
@@ -168,7 +168,11 @@ public:
   using Base::stop;
 
   SPMCMulticastQueueReliableBounded(std::size_t N, const Allocator& alloc = Allocator())
-    : Base(N, alloc), producer_ctx_(*this), consumers_pending_attach_(0), next_max_consumer_id_(0), max_producer_id_(0)
+    : Base(N, alloc),
+      producer_ctx_(*this),
+      consumers_pending_attach_(0),
+      next_max_consumer_id_(0),
+      next_max_producer_id_(0)
   {
     for (auto it = std::begin(consumers_progress_); it != std::end(consumers_progress_); ++it)
       it->idx.store(CONSUMER_IS_WELCOME, std::memory_order_release);
@@ -191,7 +195,7 @@ public:
   template <class Consumer>
   ConsumerTicket attach_consumer(Consumer& c)
   {
-    for (size_t i = 0; i < _MAX_CONSUMER_N_ + 1; ++i)
+    for (size_t i = 0; i < _MAX_CONSUMER_N_; ++i)
     {
       std::atomic<bool>& locker = this->consumers_registry_.at(i);
       bool is_locked = locker.load(std::memory_order_acquire);
@@ -222,7 +226,7 @@ public:
           {
             Spinlock::scoped_lock autolock(this->slow_path_guard_);
             auto latest_max_consumer_id = this->next_max_consumer_id_.load(std::memory_order_relaxed);
-            this->next_max_consumer_id_.store(std::max(i, latest_max_consumer_id), std::memory_order_release);
+            this->next_max_consumer_id_.store(std::max(i + 1, latest_max_consumer_id), std::memory_order_release);
           }
 
           // let's wait for producer to consumer our positions from which we
@@ -285,9 +289,9 @@ public:
           {
             break;
           }
-        } while (next_max_consumer_id_ > 0);
+        } while (next_max_consumer_id_ > 0 && new_max_consumer_id != std::numeric_limits<size_t>::max());
 
-        this->next_max_consumer_id_.store(new_max_consumer_id, std::memory_order_release);
+        this->next_max_consumer_id_.store(new_max_consumer_id + 1, std::memory_order_release);
         return true;
       }
       else
@@ -324,7 +328,7 @@ public:
   template <class Producer>
   ProducerTicket attach_producer(Producer& p)
   {
-    for (size_t i = 1; i < _MAX_PRODUCER_N_ + 1; ++i)
+    for (size_t i = 0; i < _MAX_PRODUCER_N_; ++i)
     {
       std::atomic<bool>& locker = this->producer_ctx_.producer_registry_.at(i);
       bool is_locked = locker.load(std::memory_order_acquire);
@@ -334,8 +338,8 @@ public:
         {
           {
             Spinlock::scoped_lock autolock(this->slow_path_guard_);
-            auto latest_max_producer_id = this->max_producer_id_.load(std::memory_order_relaxed);
-            this->max_producer_id_.store(std::max(i, latest_max_producer_id), std::memory_order_release);
+            auto latest_max_producer_id = this->next_max_producer_id_.load(std::memory_order_relaxed);
+            this->next_max_producer_id_.store(std::max(i + 1, latest_max_producer_id), std::memory_order_release);
           }
 
           // let's wait for producer to consumer our positions from which we
@@ -374,8 +378,8 @@ public:
 
         Spinlock::scoped_lock autolock(this->slow_path_guard_);
         // It shall be safe to update max consumer idx as the attach function would restore max consumer idx shall one appear right after.
-        auto new_max_producer_id = _MAX_PRODUCER_N_;
-        while (new_max_producer_id > 0)
+        auto new_max_producer_id = _MAX_PRODUCER_N_ - 1;
+        while (new_max_producer_id >= 0 && new_max_producer_id != std::numeric_limits<size_t>::max())
         {
           if (this->producer_ctx_.producer_progress_.at(new_max_producer_id).idx.load(std::memory_order_relaxed) ==
               PRODUCER_IS_WELCOME)
@@ -386,7 +390,7 @@ public:
           }
         }
 
-        this->max_producer_id_.store(new_max_producer_id, std::memory_order_release);
+        this->next_max_producer_id_.store(new_max_producer_id + 1, std::memory_order_release);
         return true;
       }
       else
@@ -440,8 +444,8 @@ public:
       size_t min_next_producer_idx_local = original_idx;
       if constexpr (_MAX_PRODUCER_N_ > 1)
       {
-        auto max_producer_id = this->max_producer_id_.load(std::memory_order_acquire);
-        for (size_t i = 1; i <= max_producer_id; ++i)
+        auto next_max_producer_id = this->next_max_producer_id_.load(std::memory_order_acquire);
+        for (size_t i = 0; i < next_max_producer_id; ++i)
         {
           min_next_producer_idx = this->producer_ctx_.producer_progress_[i].idx.load(std::memory_order_acquire);
           if (min_next_producer_idx < PRODUCER_JOINED)
