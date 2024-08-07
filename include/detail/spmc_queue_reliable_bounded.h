@@ -44,7 +44,7 @@ class SPMCMulticastQueueReliableBounded
   {
     std::atomic<size_t> idx;
     std::atomic<size_t> queue_idx;
-    std::atomic_uint8_t previous_version;
+    std::atomic<VersionType> previous_version;
   };
 
   struct ProducerContext
@@ -223,7 +223,7 @@ public:
             {
               // if the queue has not started, then let's assign the next read idx by ourselves!
               this->consumers_progress_.at(i).idx.store(0, std::memory_order_release);
-              this->consumers_progress_.at(i).previous_version.store(0, std::memory_order_release);
+              this->consumers_progress_.at(i).previous_version.store(version_type{}, std::memory_order_release);
               producer_need_to_accept = false;
             }
           }
@@ -328,7 +328,7 @@ public:
       {
         consumer_next_idx = consumer_from_idx;
         size_t queue_version = consumer_next_idx / this->size();
-        uint8_t previous_version = (queue_version & 1) ? 1 : 0;
+        auto previous_version = (queue_version & 1) ? version_type{1u} : version_type{};
         this->consumers_progress_[i].previous_version.store(previous_version, std::memory_order_release);
         this->consumers_progress_[i].idx.store(consumer_next_idx, std::memory_order_release);
         this->consumers_pending_attach_.fetch_sub(1, std::memory_order_release);
@@ -531,13 +531,13 @@ public:
 
     size_t idx = original_idx & this->idx_mask_;
     Node& node = this->nodes_[idx];
-    uint8_t orig_version = node.version_.load(std::memory_order_acquire);
-    uint8_t version;
+    version_type orig_version = node.version_.load(std::memory_order_acquire);
+    version_type version;
 
     if constexpr (_MAX_PRODUCER_N_ > 1)
     {
       // cannot estimate properly version as consumer can join / detach dynamically...
-      version = (original_idx / this->size()) & 1 ? 1 : 0;
+      version = ((original_idx / this->size()) & 1u) ? version_type{1u} : version_type{0};
     }
     else
     {
@@ -554,7 +554,7 @@ public:
     }
 
     NodeAllocTraits::construct(this->alloc_, static_cast<T*>(storage), std::forward<Args>(args)...);
-    node.version_.store(version ^ (uint8_t)1, std::memory_order_release);
+    node.version_.store(version ^ version_type{1u}, std::memory_order_release);
     if constexpr (_MAX_PRODUCER_N_ > 1)
     {
       try_update_producer_progress(original_idx, producer);
@@ -571,7 +571,7 @@ public:
     if (consumer.previous_version_ ^ version)
     {
       std::forward<F>(f)(node.storage_);
-      if (idx + 1 == this->n_)
+      if (idx + 1u == this->n_)
       { // need to
         // rollover
         consumer.previous_version_ = version;
@@ -607,11 +607,11 @@ public:
   }
 
   template <class C>
-  ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node, auto version, C& consumer)
+  ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node, version_type version, C& consumer)
   {
-    if (consumer.previous_version_ ^ (uint8_t)version)
+    if (consumer.previous_version_ ^ version)
     {
-      if (idx + 1 == this->n_)
+      if (idx + 1u == this->n_)
       { // need to
         // rollover
         consumer.previous_version_ = version;
