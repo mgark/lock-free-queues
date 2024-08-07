@@ -22,7 +22,7 @@
 #include <memory>
 #include <string>
 
-template <class T, class Derived, size_t _MAX_CONSUMER_N_ = 8, size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>>
+template <class T, class Derived, size_t _MAX_CONSUMER_N_, size_t _BATCH_NUM_, class Allocator, class VersionType>
 class SPMCMulticastQueueAdaptiveBase
 {
 public:
@@ -35,7 +35,7 @@ public:
     size_t consumer_next_idx;
     size_t items_per_batch;
     size_t queue_idx;
-    size_t previous_version;
+    VersionType previous_version;
     ConsumerAttachReturnCode ret_code;
   };
 
@@ -49,7 +49,7 @@ public:
 protected:
   struct Node
   {
-    std::atomic<size_t> version_{0};
+    std::atomic<VersionType> version_{0};
     alignas(T) std::byte storage_[sizeof(T)];
   };
 

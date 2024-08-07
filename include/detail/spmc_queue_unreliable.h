@@ -17,7 +17,9 @@
 #pragma once
 
 // Confalted queue only supported on x86
+#include <cstdint>
 #include <limits>
+#include <sys/types.h>
 #if defined(__x86_64__)
 
   #include "detail/common.h"
@@ -25,10 +27,11 @@
   #include <atomic>
   #include <type_traits>
 
-template <class T, size_t _MAX_CONSUMER_N_ = 8, size_t _MAX_PRODUCER_N_ = 1, size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>>
+template <class T, size_t _MAX_CONSUMER_N_ = 8, size_t _MAX_PRODUCER_N_ = 1, size_t _BATCH_NUM_ = 4,
+          class Allocator = std::allocator<T>, class VersionType = size_t>
 class SPMCMulticastQueueUnreliable
   : public SPMCMulticastQueueBase<T, SPMCMulticastQueueUnreliable<T, _MAX_CONSUMER_N_, _MAX_PRODUCER_N_, _BATCH_NUM_, Allocator>,
-                                  _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>
+                                  _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator, VersionType>
 {
   static_assert(std::is_trivially_copyable_v<T>);
 
@@ -84,7 +87,9 @@ class SPMCMulticastQueueUnreliable
   ProducerContext producer_ctx_;
 
 public:
-  using Base = SPMCMulticastQueueBase<T, SPMCMulticastQueueUnreliable, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>;
+  using version_type = VersionType;
+  using Base =
+    SPMCMulticastQueueBase<T, SPMCMulticastQueueUnreliable, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator, VersionType>;
   using NodeAllocTraits = typename Base::NodeAllocTraits;
   using Node = typename Base::Node;
   using ProducerTicket = typename Base::ProducerTicket;
@@ -132,7 +137,7 @@ public:
     size_t idx = original_idx & this->idx_mask_;
     Node& node = this->nodes_[idx];
     {
-      size_t version = node.version_.load(std::memory_order_relaxed);
+      auto version = node.version_.load(std::memory_order_relaxed);
       node.version_.store(version + 1, std::memory_order_relaxed); // WARNING! indicating that write is in-progress
       std::atomic_thread_fence(std::memory_order_release); // again it is not strictly standard compliant, but will work on
       //  x86. This fence prevents stores preceding it to-reorder with the writes following it, so it means if reader would see
@@ -145,11 +150,25 @@ public:
     return ProduceReturnCode::Published;
   }
 
-  template <class C, class F>
-  ConsumeReturnCode consume_by_func(size_t idx, size_t& queue_idx, Node& node, size_t version,
-                                    C& consumer, F&& f)
+  /*TODO: WARNING! NOT SUPPORTED for Unreliable queues, but maybe we can simulate it by always
+  copying a top element!
+
+  template <class C> const T* peek(Node& node, auto version, C& consumer) const
   {
-    size_t& previous_version = consumer.previous_version_;
+    if (consumer.previous_version_ < version)
+    {
+      return reinterpret_cast<const T*>(node.storage_);
+    }
+    else
+    {
+      return nullptr;
+    }
+  }*/
+
+  template <class C, class F>
+  ConsumeReturnCode consume_by_func(size_t idx, size_t& queue_idx, Node& node, auto version, C& consumer, F&& f)
+  {
+    auto& previous_version = consumer.previous_version_;
     if ((version & 1) == 0 && previous_version < version)
     {
       std::byte tmp[sizeof(T)];
@@ -160,7 +179,7 @@ public:
       // object gonna be read, its new version would be read as well so that we can detect it if the
       // producer could warp around and modify our object while we were reading it
       std::atomic_thread_fence(std::memory_order_acquire);
-      size_t recent_version = node.version_.load(std::memory_order_relaxed);
+      auto recent_version = node.version_.load(std::memory_order_relaxed);
       if (recent_version == version)
       {
         std::forward<F>(f)(tmp);
@@ -181,9 +200,9 @@ public:
   }
 
   template <class C>
-  ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node, size_t version, C& consumer)
+  ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node, auto version, C& consumer)
   {
-    size_t& previous_version = consumer.previous_version_;
+    auto& previous_version = consumer.previous_version_;
     if ((version & 1) == 0 && previous_version < version)
     {
       ++consumer.consumer_next_idx_;

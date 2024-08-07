@@ -23,14 +23,19 @@
 #include <atomic>
 #include <cassert>
 #include <catch2/benchmark/detail/catch_benchmark_stats.hpp>
+#include <catch2/catch_version.hpp>
+#include <cstdint>
 #include <limits>
+#include <sys/types.h>
 
-template <class T, size_t _MAX_CONSUMER_N_ = 8, size_t _MAX_PRODUCER_N_ = 1, size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>>
+template <class T, size_t _MAX_CONSUMER_N_ = 8, size_t _MAX_PRODUCER_N_ = 1, size_t _BATCH_NUM_ = 4,
+          class Allocator = std::allocator<T>, class VersionType = uint8_t>
 class SPMCMulticastQueueReliableBounded
   : public SPMCMulticastQueueBase<T, SPMCMulticastQueueReliableBounded<T, _MAX_CONSUMER_N_, _MAX_PRODUCER_N_, _BATCH_NUM_, Allocator>,
-                                  _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>
+                                  _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator, VersionType>
 {
-  using Me = SPMCMulticastQueueReliableBounded<T, _MAX_CONSUMER_N_, _MAX_PRODUCER_N_, _BATCH_NUM_, Allocator>;
+  using Me =
+    SPMCMulticastQueueReliableBounded<T, _MAX_CONSUMER_N_, _MAX_PRODUCER_N_, _BATCH_NUM_, Allocator, VersionType>;
 
   static_assert(_MAX_CONSUMER_N_ > 0);
   static_assert(_MAX_PRODUCER_N_ > 0);
@@ -38,8 +43,8 @@ class SPMCMulticastQueueReliableBounded
   struct alignas(64) ConsumerProgress
   {
     std::atomic<size_t> idx;
-    std::atomic<size_t> previous_version;
     std::atomic<size_t> queue_idx;
+    std::atomic_uint8_t previous_version;
   };
 
   struct ProducerContext
@@ -153,8 +158,9 @@ class SPMCMulticastQueueReliableBounded
   std::atomic<size_t> next_max_producer_id_;
 
 public:
+  using version_type = VersionType;
   using Base =
-    SPMCMulticastQueueBase<T, SPMCMulticastQueueReliableBounded, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>;
+    SPMCMulticastQueueBase<T, SPMCMulticastQueueReliableBounded, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator, VersionType>;
   using NodeAllocTraits = typename Base::NodeAllocTraits;
   using Node = typename Base::Node;
   using ConsumerTicket = typename Base::ConsumerTicket;
@@ -178,6 +184,11 @@ public:
       it->idx.store(CONSUMER_IS_WELCOME, std::memory_order_release);
 
     std::fill(std::begin(consumers_registry_), std::end(consumers_registry_), 0 /*unlocked*/);
+  }
+
+  size_t get_producer_idx() const
+  {
+    return producer_ctx_.producer_idx_.load(std::memory_order_relaxed);
   }
 
   template <class Producer>
@@ -233,7 +244,7 @@ public:
           // shall start safely consuming
           size_t stopped;
           size_t consumer_next_idx;
-          size_t previous_version;
+          version_type previous_version;
           do
           {
             stopped = is_stopped();
@@ -316,7 +327,8 @@ public:
             consumer_next_idx, CONSUMER_JOIN_INPROGRESS, std::memory_order_acquire, std::memory_order_relaxed))
       {
         consumer_next_idx = consumer_from_idx;
-        size_t previous_version = consumer_next_idx / this->size();
+        size_t queue_version = consumer_next_idx / this->size();
+        uint8_t previous_version = (queue_version & 1) ? 1 : 0;
         this->consumers_progress_[i].previous_version.store(previous_version, std::memory_order_release);
         this->consumers_progress_[i].idx.store(consumer_next_idx, std::memory_order_release);
         this->consumers_pending_attach_.fetch_sub(1, std::memory_order_release);
@@ -519,13 +531,13 @@ public:
 
     size_t idx = original_idx & this->idx_mask_;
     Node& node = this->nodes_[idx];
-    size_t orig_version = node.version_.load(std::memory_order_acquire);
-    size_t version;
+    uint8_t orig_version = node.version_.load(std::memory_order_acquire);
+    uint8_t version;
 
     if constexpr (_MAX_PRODUCER_N_ > 1)
     {
       // cannot estimate properly version as consumer can join / detach dynamically...
-      version = original_idx / this->size();
+      version = (original_idx / this->size()) & 1 ? 1 : 0;
     }
     else
     {
@@ -535,14 +547,14 @@ public:
     void* storage = node.storage_;
     if constexpr (!std::is_trivially_destructible_v<T>)
     {
-      if (version > 0)
+      if (original_idx > idx)
       {
         NodeAllocTraits::destroy(this->alloc_, static_cast<T*>(storage));
       }
     }
 
     NodeAllocTraits::construct(this->alloc_, static_cast<T*>(storage), std::forward<Args>(args)...);
-    node.version_.store(1 + version, std::memory_order_release);
+    node.version_.store(version ^ (uint8_t)1, std::memory_order_release);
     if constexpr (_MAX_PRODUCER_N_ > 1)
     {
       try_update_producer_progress(original_idx, producer);
@@ -554,10 +566,9 @@ public:
   }
 
   template <class C, class F>
-  ConsumeReturnCode consume_by_func(size_t idx, size_t& queue_idx, Node& node, size_t version,
-                                    C& consumer, F&& f)
+  ConsumeReturnCode consume_by_func(size_t idx, size_t& queue_idx, Node& node, auto version, C& consumer, F&& f)
   {
-    if (consumer.previous_version_ < version)
+    if (consumer.previous_version_ ^ version)
     {
       std::forward<F>(f)(node.storage_);
       if (idx + 1 == this->n_)
@@ -583,9 +594,22 @@ public:
   }
 
   template <class C>
-  ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node, size_t version, C& consumer)
+  const T* peek(Node& node, auto version, C& consumer) const
   {
-    if (consumer.previous_version_ < version)
+    if (consumer.previous_version_ ^ version)
+    {
+      return reinterpret_cast<const T*>(node.storage_);
+    }
+    else
+    {
+      return nullptr;
+    }
+  }
+
+  template <class C>
+  ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node, auto version, C& consumer)
+  {
+    if (consumer.previous_version_ ^ (uint8_t)version)
     {
       if (idx + 1 == this->n_)
       { // need to

@@ -37,7 +37,7 @@ protected:
   Queue* q_;
   size_t n_;
   size_t consumer_next_idx_;
-  size_t previous_version_;
+  typename Queue::version_type previous_version_;
   size_t idx_mask_;
   size_t consumer_id_;
   size_t next_checkout_point_idx_;
@@ -94,7 +94,6 @@ public:
     idx_mask_ = queue_sz - 1;
     items_per_batch_ = batch_sz;
     next_checkout_point_idx_ = items_per_batch_ + (consumer_next_idx_ - consumer_next_idx_ % items_per_batch_);
-
     n_ = consumer_next_idx_ & idx_mask_; // need to adjust n_!!!!
     if (0 == n_)
       n_ = queue_sz;

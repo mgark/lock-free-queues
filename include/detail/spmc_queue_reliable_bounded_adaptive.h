@@ -25,10 +25,10 @@
 #include <math.h>
 #include <memory>
 
-template <class T, size_t _MAX_CONSUMER_N_ = 8, size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>>
+template <class T, size_t _MAX_CONSUMER_N_ = 8, size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>, class VersionType = size_t>
 class SPMCMulticastQueueReliableAdaptiveBounded
   : public SPMCMulticastQueueAdaptiveBase<T, SPMCMulticastQueueReliableAdaptiveBounded<T, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>,
-                                          _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>
+                                          _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator, VersionType>
 {
   static constexpr size_t _MAX_PRODUCER_N_ = 1;
 
@@ -112,8 +112,9 @@ class SPMCMulticastQueueReliableAdaptiveBounded
   size_t prev_version_;
 
 public:
+  using version_type = VersionType;
   using Base =
-    SPMCMulticastQueueAdaptiveBase<T, SPMCMulticastQueueReliableAdaptiveBounded, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>;
+    SPMCMulticastQueueAdaptiveBase<T, SPMCMulticastQueueReliableAdaptiveBounded, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator, VersionType>;
   using NodeAllocTraits = typename Base::NodeAllocTraits;
   using Node = typename Base::Node;
   using ProducerTicket = typename Base::ProducerTicket;
@@ -184,7 +185,7 @@ public:
           size_t stopped;
           size_t consumer_next_idx;
           size_t consumer_queue_idx;
-          size_t previous_version;
+          version_type previous_version;
           do
           {
             stopped = is_stopped();
@@ -357,7 +358,7 @@ public:
     size_t back_buffer_idx = this->back_buffer_idx_.load(std::memory_order_acquire);
     bool first_time_publish = min_next_consumer_idx == CONSUMER_IS_WELCOME;
     Node& current_node = this->nodes_[back_buffer_idx][idx];
-    size_t version = current_node.version_.load(std::memory_order_acquire); // be carefull not gonna work with syncnronized producers!
+    size_t version = current_node.version_.load(std::memory_order_acquire); // be careful not gonna work with synchronized producers!
     bool free_node = prev_version_ == version;
     bool no_free_slot = first_time_publish ||
       (original_idx - min_next_consumer_idx >= this->current_sz_ && !free_node);
