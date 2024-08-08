@@ -118,6 +118,38 @@ constexpr auto calc_power_of_two()
 
 constexpr inline std::array<size_t, 64> POWER_OF_TWO = calc_power_of_two<64>();
 
+/* note that it would generate bit masks by treating each ith bit as if T was stored in the array of bytes,
+so you must take into account big /little endian and also actual value interpretation if you need to use it*/
+template <class T, size_t arr_sz = sizeof(T) * 8>
+std::array<T, arr_sz> generate_bit_masks_with_single_0_bit()
+{
+  std::array<T, arr_sz> result;
+  size_t bytes_num = sizeof(T);
+
+  std::byte raw_bytes_all_1bit[bytes_num];
+  for (size_t i = 0; i < bytes_num; ++i)
+    raw_bytes_all_1bit[i] = ~std::byte{0};
+
+  for (size_t ith_bit = 0; ith_bit < arr_sz; ++ith_bit)
+  {
+    // need to make sure only ith_bit is set to 0 and the rest kept 1
+    std::byte val[bytes_num];
+    std::memcpy(&val[0], &raw_bytes_all_1bit[0], bytes_num);
+
+    // get T with all 1 bit set, then just get byte around ith_bit index, convert it to uin8_t and set the required bit to 0
+    size_t byte_idx = ith_bit / 8;
+    size_t ith_bit_idx = ith_bit % 8;
+    std::byte byte_with_one_0 = ~std::byte(uint8_t{1u} << (7 - ith_bit_idx));
+    val[byte_idx] = byte_with_one_0;
+
+    std::memcpy(&result[ith_bit], &val, bytes_num);
+  }
+
+  return result;
+}
+
+// inline auto INT_MASKS_SINGLE_0_BIT = generate_bit_masks_with_single_0_bit<int>();
+
 //#define _DISABLE_UNRELIABLE_MULTICAST_TEST_
 //#define _DISABLE_ADAPTIVE_QUEUE_TEST_
 //#define _TRACE_STATS_
