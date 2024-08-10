@@ -15,12 +15,14 @@
  */
 
 #include "common_test_utils.h"
+#include "detail/common.h"
 #include <assert.h>
 #include <catch2/catch_all.hpp>
+#include <cstdint>
 #include <mpmc.h>
 #include <thread>
 
-TEST_CASE("SPSC basic functional test")
+TEST_CASE("SPSC basic functional test - version based queue")
 {
   using Queue = SPMCMulticastQueueReliableBounded<Order, 1>;
   Queue q(8);
@@ -36,7 +38,48 @@ TEST_CASE("SPSC basic functional test")
   }
 
   {
-    auto r = c.consume([&q](const Order& o) mutable { std::cout << o; });
+    auto r = c.consume([&q](const Order& o) mutable { CHECK(o.id == 1u); });
+    CHECK(ConsumeReturnCode::Consumed == r);
+  }
+}
+
+TEST_CASE("SPSC basic functional test - bit-reuse based queue")
+{
+  using MsgType = IntegralMSBAlways0<uint32_t>;
+  using Queue = SPMCMulticastQueueReliableBounded<MsgType, 1, 1, 2>;
+  Queue q(2);
+
+  ConsumerNonBlocking<Queue> c(q);
+  ProducerNonBlocking<Queue> p(q);
+  q.start();
+
+  {
+    auto r = p.emplace(1u);
+    CHECK(ProduceReturnCode::Published == r);
+  }
+  {
+    auto r = p.emplace(2u);
+    CHECK(ProduceReturnCode::Published == r);
+  }
+  {
+    auto r = p.emplace(3u);
+    CHECK(ProduceReturnCode::SlowConsumer == r);
+  }
+
+  {
+    auto r = c.consume([&q](const MsgType& o) mutable { CHECK(o == MsgType::type{1u}); });
+    CHECK(ConsumeReturnCode::Consumed == r);
+  }
+  {
+    auto r = p.emplace(4u);
+    CHECK(ProduceReturnCode::Published == r);
+  }
+  {
+    auto r = c.consume([&q](const MsgType& o) mutable { CHECK(o == MsgType::type{2u}); });
+    CHECK(ConsumeReturnCode::Consumed == r);
+  }
+  {
+    auto r = c.consume([&q](const MsgType& o) mutable { CHECK(o == MsgType::type{4u}); });
     CHECK(ConsumeReturnCode::Consumed == r);
   }
 }

@@ -22,6 +22,20 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <type_traits>
+
+template <class T, typename = std::void_t<>>
+struct has_0_bit_free : std::false_type
+{
+};
+
+template <class T>
+struct has_0_bit_free<T, std::enable_if_t<typename T::has_free_0_bit{}>> : std::true_type
+{
+};
+
+template <class T>
+inline constexpr auto is_0_bit_free = has_0_bit_free<T>{};
 
 template <class T, class Derived, size_t _MAX_CONSUMER_N_, size_t _BATCH_NUM_, class Allocator, class VersionType>
 class SPMCMulticastQueueBase
@@ -48,12 +62,18 @@ public:
   };
 
 protected:
-  struct Node
+  struct NodeWithVersion
   {
-    std::atomic<VersionType> version_{0};
+    std::atomic<VersionType> version_;
     alignas(T) std::byte storage_[sizeof(T)];
   };
 
+  struct NodeWithoutVersion
+  {
+    alignas(T) std::byte storage_[sizeof(T)];
+  };
+
+  using Node = std::conditional_t<is_0_bit_free<T>, NodeWithoutVersion, NodeWithVersion>;
   using NodeAllocator = typename std::allocator_traits<Allocator>::template rebind_alloc<Node>;
   using NodeAllocTraits = std::allocator_traits<NodeAllocator>;
   static_assert(std::is_default_constructible_v<Node>, "Node must be default constructible");
@@ -85,7 +105,7 @@ public:
     }
 
     nodes_ = std::allocator_traits<NodeAllocator>::allocate(alloc_, N);
-    std::uninitialized_default_construct(nodes_, nodes_ + N);
+    std::uninitialized_value_construct(nodes_, nodes_ + N);
   }
 
   ~SPMCMulticastQueueBase()
@@ -140,7 +160,16 @@ public:
 
     do
     {
-      auto version = node.version_.load(std::memory_order_acquire);
+      VersionType version;
+      if constexpr (is_0_bit_free<T>)
+      {
+        version = reinterpret_cast<const T&>(node.storage_).read_version();
+      }
+      else
+      {
+        version = node.version_.load(std::memory_order_acquire);
+      }
+
       r = static_cast<Derived&>(*this).consume_by_func(
         idx, queue_idx, node, version, consumer,
         [dest](void* storage)
@@ -162,7 +191,17 @@ public:
   {
     size_t idx = consumer.consumer_next_idx_ & consumer.idx_mask_;
     Node& node = this->nodes_[idx];
-    auto version = node.version_.load(std::memory_order_acquire);
+
+    VersionType version;
+    if constexpr (is_0_bit_free<T>)
+    {
+      version = reinterpret_cast<const T&>(node.storage_).read_version();
+    }
+    else
+    {
+      version = node.version_.load(std::memory_order_acquire);
+    }
+
     auto r = static_cast<Derived&>(*this).consume_by_func(
       idx, queue_idx, node, version, consumer,
       [dest](void* storage)
@@ -192,7 +231,16 @@ public:
 
     do
     {
-      auto version = node.version_.load(std::memory_order_acquire);
+      VersionType version;
+      if constexpr (is_0_bit_free<T>)
+      {
+        version = reinterpret_cast<const T&>(node.storage_).read_version();
+      }
+      else
+      {
+        version = node.version_.load(std::memory_order_acquire);
+      }
+
       r = static_cast<Derived&>(*this).consume_by_func(
         idx, queue_idx, node, version, consumer,
         [f = std::forward<F>(f)](void* storage) mutable
@@ -214,7 +262,17 @@ public:
   {
     size_t idx = consumer.consumer_next_idx_ & consumer.idx_mask_;
     Node& node = this->nodes_[idx];
-    auto version = node.version_.load(std::memory_order_acquire);
+
+    VersionType version;
+    if constexpr (is_0_bit_free<T>)
+    {
+      version = reinterpret_cast<const T&>(node.storage_).read_version();
+    }
+    else
+    {
+      version = node.version_.load(std::memory_order_acquire);
+    }
+
     auto r = static_cast<Derived&>(*this).consume_by_func(
       idx, queue_idx, node, version, consumer,
       [f = std::forward<F>(f)](void* storage) mutable
@@ -243,7 +301,16 @@ public:
     const T* r;
     do
     {
-      auto version = node.version_.load(std::memory_order_acquire);
+      VersionType version;
+      if constexpr (is_0_bit_free<T>)
+      {
+        version = reinterpret_cast<const T&>(node.storage_).read_version();
+      }
+      else
+      {
+        version = node.version_.load(std::memory_order_acquire);
+      }
+
       r = peek(queue_idx, node, version, consumer);
       if (r)
       {
@@ -259,7 +326,17 @@ public:
   {
     size_t idx = consumer.consumer_next_idx_ & consumer.idx_mask_;
     Node& node = this->nodes_[idx];
-    auto version = node.version_.load(std::memory_order_acquire);
+
+    VersionType version;
+    if constexpr (is_0_bit_free<T>)
+    {
+      version = reinterpret_cast<const T&>(node.storage_).read_version();
+    }
+    else
+    {
+      version = node.version_.load(std::memory_order_acquire);
+    }
+
     return peek(queue_idx, node, version, consumer);
   }
 
@@ -273,7 +350,16 @@ public:
 
     do
     {
-      auto version = node.version_.load(std::memory_order_acquire);
+      VersionType version;
+      if constexpr (is_0_bit_free<T>)
+      {
+        version = reinterpret_cast<const T&>(node.storage_).read_version();
+      }
+      else
+      {
+        version = node.version_.load(std::memory_order_acquire);
+      }
+
       r = static_cast<Derived&>(*this).skip(idx, queue_idx, node, version, consumer);
       if (ConsumeReturnCode::Consumed == r)
         return r;
@@ -291,7 +377,17 @@ public:
   {
     size_t idx = consumer.consumer_next_idx_ & consumer.idx_mask_;
     Node& node = this->nodes_[idx];
-    auto version = node.version_.load(std::memory_order_acquire);
+
+    VersionType version;
+    if constexpr (is_0_bit_free<T>)
+    {
+      version = reinterpret_cast<const T&>(node.storage_).read_version();
+    }
+    else
+    {
+      version = node.version_.load(std::memory_order_acquire);
+    }
+
     auto r = static_cast<Derived&>(*this).skip(idx, queue_idx, node, version, consumer);
     if (r == ConsumeReturnCode::Consumed)
     {

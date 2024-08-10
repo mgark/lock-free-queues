@@ -45,4 +45,30 @@ TEST_CASE("SPMC functional test")
   }
 }
 
+TEST_CASE("SPMC functional test - re-use bit")
+{
+  using MsgType = IntegralMSBAlways0<uint32_t>;
+  using Queue = SPMCMulticastQueueReliableBounded<MsgType, 2>;
+
+  Queue q(8);
+
+  constexpr bool blocking = true;
+  ConsumerBlocking<Queue> c1;
+  ConsumerBlocking<Queue> c2;
+  ProducerBlocking<Queue> p(q);
+  CHECK(ConsumerAttachReturnCode::Attached == c1.attach(q));
+  CHECK(ConsumerAttachReturnCode::Attached == c2.attach(q));
+  q.start();
+  {
+    auto r = p.emplace(1u);
+    CHECK(ProduceReturnCode::Published == r);
+  }
+  {
+    auto r = c1.consume([&q](const MsgType& o) mutable { CHECK(o == 1u); });
+    CHECK(ConsumeReturnCode::Consumed == r);
+    r = c2.consume([&q](const MsgType& o) mutable { CHECK(o == 1u); });
+    CHECK(ConsumeReturnCode::Consumed == r);
+  }
+}
+
 int main(int argc, char** argv) { return Catch::Session().run(argc, argv); }

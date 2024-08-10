@@ -531,18 +531,6 @@ public:
 
     size_t idx = original_idx & this->idx_mask_;
     Node& node = this->nodes_[idx];
-    version_type orig_version = node.version_.load(std::memory_order_acquire);
-    version_type version;
-
-    if constexpr (_MAX_PRODUCER_N_ > 1)
-    {
-      // cannot estimate properly version as consumer can join / detach dynamically...
-      version = ((original_idx / this->size()) & 1u) ? version_type{1u} : version_type{0};
-    }
-    else
-    {
-      version = orig_version;
-    }
 
     void* storage = node.storage_;
     if constexpr (!std::is_trivially_destructible_v<T>)
@@ -553,8 +541,57 @@ public:
       }
     }
 
-    NodeAllocTraits::construct(this->alloc_, static_cast<T*>(storage), std::forward<Args>(args)...);
-    node.version_.store(version ^ version_type{1u}, std::memory_order_release);
+    version_type version;
+    if constexpr (_MAX_PRODUCER_N_ == 1)
+    {
+      if constexpr (!is_0_bit_free<T>)
+      /*{
+        const T& obj = reinterpret_cast<T&>(node.storage_);
+        version = obj.read_version();
+      }
+      else*/
+      {
+        version = node.version_.load(std::memory_order_relaxed);
+      }
+    }
+
+    if constexpr (is_0_bit_free<T>)
+    {
+      T& obj = reinterpret_cast<T&>(node.storage_);
+      obj.construct(this->alloc_, std::forward<Args>(args)...);
+    }
+    else
+    {
+      NodeAllocTraits::construct(this->alloc_, static_cast<T*>(storage), std::forward<Args>(args)...);
+    }
+
+    if constexpr (_MAX_PRODUCER_N_ > 1)
+    {
+      // cannot estimate properly version as consumer can join / detach dynamically...
+      auto version = ((original_idx / this->size()) & 1u) ? version_type{1u} : version_type{0};
+      node.version_.store(version ^ version_type{1u}, std::memory_order_release);
+    }
+    else
+    {
+      if constexpr (!is_0_bit_free<T>)
+      /*{
+        T& obj = reinterpret_cast<T&>(node.storage_);
+        // newly constructed object must already have set re-used bit to 0!
+        if (0 == version)
+        {
+          obj.flip_version();
+        }
+        else
+        {
+          obj.release_version();
+        }
+      }
+      else*/
+      {
+        node.version_.store(version ^ version_type{1u}, std::memory_order_release);
+      }
+    }
+
     if constexpr (_MAX_PRODUCER_N_ > 1)
     {
       try_update_producer_progress(original_idx, producer);

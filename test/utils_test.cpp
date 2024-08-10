@@ -39,11 +39,27 @@ TEST_CASE("Single 0 bit bit masks test - int")
 {
   auto int_masks = generate_bit_masks_with_single_0_bit<int>();
 
-  CHECK(int_masks[0] == 0b11111111111111111111111101111111);
-  CHECK(int_masks[1] == 0b11111111111111111111111110111111);
-  CHECK(int_masks[31] == 0b11111110111111111111111111111111);
-  CHECK(int_masks[30] == 0b11111101111111111111111111111111);
-  CHECK(int_masks[24] == 0b01111111111111111111111111111111);
+  CHECK(int_masks[0] == 0b01111111111111111111111111111111);
+  CHECK(int_masks[1] == 0b10111111111111111111111111111111);
+  CHECK(int_masks[31] == 0b11111111111111111111111111111110);
+  CHECK(int_masks[30] == 0b11111111111111111111111111111101);
+  CHECK(int_masks[24] == 0b11111111111111111111111101111111);
+}
+
+TEST_CASE("Single 1 bit bit masks test - uint8_t")
+{
+  auto uint8_masks = generate_bit_masks_with_single_1_bit<std::uint8_t>();
+
+  CHECK(uint8_masks[0] == 0b10000000);
+  CHECK(uint8_masks[1] == 0b01000000);
+}
+
+TEST_CASE("Single 1 bit bit masks test - int")
+{
+  auto int_masks = generate_bit_masks_with_single_1_bit<int>();
+
+  CHECK(int_masks[0] == 0b10000000000000000000000000000000);
+  CHECK(int_masks[31] == 0b00000000000000000000000000000001);
 }
 
 int main(int argc, char** argv) { return Catch::Session().run(argc, argv); }

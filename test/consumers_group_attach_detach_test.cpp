@@ -124,7 +124,7 @@ TEST_CASE("Multi-threaded Anycast MPMC attach detach test")
   constexpr size_t _MAX_CONSUMERS_ = 3;
   constexpr size_t _MAX_PUBLISHERS_ = 4;
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 64;
-  constexpr size_t _ATTACH_DETACH_ITERATIONS_ = 1000;
+  constexpr size_t _ATTACH_DETACH_ITERATIONS_ = 4000;
   constexpr size_t _N_PER_ITERATION_ = 513;
   using Queue = SPMCMulticastQueueReliableBounded<OrderNonTrivial, _MAX_CONSUMERS_, _MAX_PUBLISHERS_>;
 
