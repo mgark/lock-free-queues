@@ -544,23 +544,23 @@ public:
     version_type version;
     if constexpr (_MAX_PRODUCER_N_ == 1)
     {
-      if constexpr (!is_0_bit_free<T>)
-      /*{
+      if constexpr (is_0_bit_free<T>)
+      {
         const T& obj = reinterpret_cast<T&>(node.storage_);
         version = obj.read_version();
       }
-      else*/
+      else
       {
         version = node.version_.load(std::memory_order_relaxed);
       }
     }
 
-    if constexpr (is_0_bit_free<T>)
-    {
-      T& obj = reinterpret_cast<T&>(node.storage_);
-      obj.construct(this->alloc_, std::forward<Args>(args)...);
-    }
-    else
+    /*    if constexpr (is_0_bit_free<T>)
+        {
+          T& obj = reinterpret_cast<T&>(node.storage_);
+          obj.construct(this->alloc_, std::forward<Args>(args)...);
+        }
+        else*/
     {
       NodeAllocTraits::construct(this->alloc_, static_cast<T*>(storage), std::forward<Args>(args)...);
     }
@@ -573,8 +573,8 @@ public:
     }
     else
     {
-      if constexpr (!is_0_bit_free<T>)
-      /*{
+      if constexpr (is_0_bit_free<T>)
+      {
         T& obj = reinterpret_cast<T&>(node.storage_);
         // newly constructed object must already have set re-used bit to 0!
         if (0 == version)
@@ -586,7 +586,7 @@ public:
           obj.release_version();
         }
       }
-      else*/
+      else
       {
         node.version_.store(version ^ version_type{1u}, std::memory_order_release);
       }

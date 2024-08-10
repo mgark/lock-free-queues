@@ -206,7 +206,7 @@ public:
     // return (val & single_1_bit_masks<T>[MsbIdx<T>]) ? uint8_t{1u} : uint8_t{0};
   }
 
-  /*void flip_version()
+  void flip_version()
   {
     T tmp = val;
     tmp ^= single_1_bit_masks<T>[MsbIdx<T>];
@@ -219,7 +219,7 @@ public:
   {
     std::atomic_ref<T> atomic_val(val);
     atomic_val.store(val, std::memory_order_release);
-  }*/
+  }
 };
 
 /* note that it would generate bit masks by treating each ith bit as if T was stored in the array of bytes,
