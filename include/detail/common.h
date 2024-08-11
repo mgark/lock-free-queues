@@ -206,13 +206,13 @@ public:
     return r;
   }
 
-  IntegralMSBAlways0& operator++()
+  IntegralMSBAlways0 operator++()
   {
     ++val;
     return *this;
   }
 
-  volatile IntegralMSBAlways0& operator++() volatile
+  volatile IntegralMSBAlways0 operator++() volatile
   {
     ++val;
     return *this;
