@@ -542,7 +542,11 @@ public:
     }
 
     version_type version;
-    if constexpr (_MAX_PRODUCER_N_ == 1)
+    if constexpr (_MAX_PRODUCER_N_ > 1)
+    {
+      version = ((original_idx / this->size()) & 1u) ? version_type{1u} : version_type{0};
+    }
+    else
     {
       if constexpr (is_0_bit_free<T>)
       {
@@ -555,20 +559,11 @@ public:
       }
     }
 
-    /*    if constexpr (is_0_bit_free<T>)
-        {
-          T& obj = reinterpret_cast<T&>(node.storage_);
-          obj.construct(this->alloc_, std::forward<Args>(args)...);
-        }
-        else*/
-    {
-      NodeAllocTraits::construct(this->alloc_, static_cast<T*>(storage), std::forward<Args>(args)...);
-    }
+    NodeAllocTraits::construct(this->alloc_, static_cast<T*>(storage), std::forward<Args>(args)...);
 
     if constexpr (_MAX_PRODUCER_N_ > 1)
     {
       // cannot estimate properly version as consumer can join / detach dynamically...
-      auto version = ((original_idx / this->size()) & 1u) ? version_type{1u} : version_type{0};
       node.version_.store(version ^ version_type{1u}, std::memory_order_release);
     }
     else

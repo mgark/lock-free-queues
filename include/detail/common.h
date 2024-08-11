@@ -177,16 +177,26 @@ public:
     assert(0 == (v & single_1_bit_masks<T>[MsbIdx<T>]));
   }
 
-  template <class Alloc>
-  void construct(Alloc& a, const IntegralMSBAlways0& other)
+  IntegralMSBAlways0(const IntegralMSBAlways0& other) : val(other.val)
   {
-    set_value(other.val);
+    // let's make sure MSB bit is actually set to 0!
   }
 
-  template <class Alloc>
-  void construct(Alloc& a, T v)
+  IntegralMSBAlways0(const volatile IntegralMSBAlways0& other) : val(other.val)
   {
-    set_value(v);
+    // let's make sure MSB bit is actually set to 0!
+  }
+
+  volatile IntegralMSBAlways0& operator=(const IntegralMSBAlways0& other) volatile
+  {
+    val = other.val;
+    return *this;
+  }
+
+  IntegralMSBAlways0& operator=(const IntegralMSBAlways0& other)
+  {
+    val = other.val;
+    return *this;
   }
 
   operator T() const
@@ -196,7 +206,17 @@ public:
     return r;
   }
 
-  T operator++() { return ++val; }
+  IntegralMSBAlways0& operator++()
+  {
+    ++val;
+    return *this;
+  }
+
+  volatile IntegralMSBAlways0& operator++() volatile
+  {
+    ++val;
+    return *this;
+  }
 
   uint8_t read_version() const
   {
