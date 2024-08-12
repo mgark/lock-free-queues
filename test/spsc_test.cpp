@@ -16,6 +16,7 @@
 
 #include "common_test_utils.h"
 #include "detail/common.h"
+#include "detail/single_bit_reuse.h"
 #include <assert.h>
 #include <catch2/catch_all.hpp>
 #include <cstdint>
@@ -45,9 +46,11 @@ TEST_CASE("SPSC basic functional test - version based queue")
 
 TEST_CASE("SPSC basic functional test - bit-reuse based queue")
 {
-  using MsgType = IntegralMSBAlways0<uint32_t>;
+  using MsgType = integral_msb_always_0<uint32_t>;
   using Queue = SPMCMulticastQueueReliableBounded<MsgType, 1, 1, 2>;
   Queue q(2);
+
+  static_assert(msb_always_0<MsgType>, "asdf");
 
   ConsumerNonBlocking<Queue> c(q);
   ProducerNonBlocking<Queue> p(q);

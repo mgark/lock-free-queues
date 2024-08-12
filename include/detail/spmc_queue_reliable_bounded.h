@@ -18,6 +18,7 @@
 
 #include "detail/common.h"
 #include "detail/producer.h"
+#include "detail/single_bit_reuse.h"
 #include "detail/spin_lock.h"
 #include "spmc_queue_base.h"
 #include <atomic>
@@ -548,7 +549,7 @@ public:
     }
     else
     {
-      if constexpr (is_0_bit_free<T>)
+      if constexpr (msb_always_0<T>)
       {
         const T& obj = reinterpret_cast<T&>(node.storage_);
         version = obj.read_version();
@@ -568,7 +569,7 @@ public:
     }
     else
     {
-      if constexpr (is_0_bit_free<T>)
+      if constexpr (msb_always_0<T>)
       {
         T& obj = reinterpret_cast<T&>(node.storage_);
         // newly constructed object must already have set re-used bit to 0!

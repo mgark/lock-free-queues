@@ -16,6 +16,7 @@
 
 #include "common_test_utils.h"
 #include "detail/common.h"
+#include "detail/single_bit_reuse.h"
 #include <assert.h>
 #include <catch2/catch_all.hpp>
 #include <mpmc.h>
@@ -23,7 +24,7 @@
 
 TEST_CASE("Single 0 bit bit masks test - uint8_t")
 {
-  auto uint8_masks = generate_bit_masks_with_single_0_bit<std::uint8_t>();
+  auto uint8_masks = generate_bit_masks_with_single_bit_0<std::uint8_t>();
 
   CHECK(uint8_masks[0] == 0b01111111);
   CHECK(uint8_masks[1] == 0b10111111);
@@ -37,7 +38,7 @@ TEST_CASE("Single 0 bit bit masks test - uint8_t")
 
 TEST_CASE("Single 0 bit bit masks test - int")
 {
-  auto int_masks = generate_bit_masks_with_single_0_bit<int>();
+  auto int_masks = generate_bit_masks_with_single_bit_0<int>();
 
   CHECK(int_masks[0] == 0b01111111111111111111111111111111);
   CHECK(int_masks[1] == 0b10111111111111111111111111111111);
@@ -48,7 +49,7 @@ TEST_CASE("Single 0 bit bit masks test - int")
 
 TEST_CASE("Single 1 bit bit masks test - uint8_t")
 {
-  auto uint8_masks = generate_bit_masks_with_single_1_bit<std::uint8_t>();
+  auto uint8_masks = generate_bit_masks_with_single_bit_1<std::uint8_t>();
 
   CHECK(uint8_masks[0] == 0b10000000);
   CHECK(uint8_masks[1] == 0b01000000);
@@ -56,7 +57,7 @@ TEST_CASE("Single 1 bit bit masks test - uint8_t")
 
 TEST_CASE("Single 1 bit bit masks test - int")
 {
-  auto int_masks = generate_bit_masks_with_single_1_bit<int>();
+  auto int_masks = generate_bit_masks_with_single_bit_1<int>();
 
   CHECK(int_masks[0] == 0b10000000000000000000000000000000);
   CHECK(int_masks[31] == 0b00000000000000000000000000000001);

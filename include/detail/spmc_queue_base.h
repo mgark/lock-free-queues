@@ -17,25 +17,13 @@
 #pragma once
 
 #include "common.h"
+#include "single_bit_reuse.h"
 #include "spin_lock.h"
 #include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <type_traits>
-
-template <class T, typename = std::void_t<>>
-struct has_0_bit_free : std::false_type
-{
-};
-
-template <class T>
-struct has_0_bit_free<T, std::enable_if_t<typename T::has_free_0_bit{}>> : std::true_type
-{
-};
-
-template <class T>
-inline constexpr auto is_0_bit_free = has_0_bit_free<T>{};
 
 template <class T, class Derived, size_t _MAX_CONSUMER_N_, size_t _BATCH_NUM_, class Allocator, class VersionType>
 class SPMCMulticastQueueBase
@@ -73,10 +61,10 @@ protected:
     alignas(T) std::byte storage_[sizeof(T)];
   };
 
-  using Node = std::conditional_t<is_0_bit_free<T>, NodeWithoutVersion, NodeWithVersion>;
+  using Node = std::conditional_t<msb_always_0<T>, NodeWithoutVersion, NodeWithVersion>;
   using NodeAllocator = typename std::allocator_traits<Allocator>::template rebind_alloc<Node>;
   using NodeAllocTraits = std::allocator_traits<NodeAllocator>;
-  static_assert(std::is_default_constructible_v<Node>, "Node must be default constructible");
+  static_assert(std::is_default_constructible_v<Node>, "Node must be default-constructible");
 
   // these variables pretty much don't change through the lifetime of the queue
   size_t n_;
@@ -104,8 +92,8 @@ public:
       throw std::runtime_error("items_per_batch_ is not power of two");
     }
 
-    nodes_ = std::allocator_traits<NodeAllocator>::allocate(alloc_, N);
-    std::uninitialized_value_construct(nodes_, nodes_ + N);
+    nodes_ = std::allocator_traits<NodeAllocator>::allocate(alloc_, n_);
+    std::uninitialized_value_construct(nodes_, nodes_ + n_);
   }
 
   ~SPMCMulticastQueueBase()
@@ -161,7 +149,7 @@ public:
     do
     {
       VersionType version;
-      if constexpr (is_0_bit_free<T>)
+      if constexpr (msb_always_0<T>)
       {
         version = reinterpret_cast<const T&>(node.storage_).read_version();
       }
@@ -193,7 +181,7 @@ public:
     Node& node = this->nodes_[idx];
 
     VersionType version;
-    if constexpr (is_0_bit_free<T>)
+    if constexpr (msb_always_0<T>)
     {
       version = reinterpret_cast<const T&>(node.storage_).read_version();
     }
@@ -232,7 +220,7 @@ public:
     do
     {
       VersionType version;
-      if constexpr (is_0_bit_free<T>)
+      if constexpr (msb_always_0<T>)
       {
         version = reinterpret_cast<const T&>(node.storage_).read_version();
       }
@@ -264,7 +252,7 @@ public:
     Node& node = this->nodes_[idx];
 
     VersionType version;
-    if constexpr (is_0_bit_free<T>)
+    if constexpr (msb_always_0<T>)
     {
       version = reinterpret_cast<const T&>(node.storage_).read_version();
     }
@@ -302,7 +290,7 @@ public:
     do
     {
       VersionType version;
-      if constexpr (is_0_bit_free<T>)
+      if constexpr (msb_always_0<T>)
       {
         version = reinterpret_cast<const T&>(node.storage_).read_version();
       }
@@ -328,7 +316,7 @@ public:
     Node& node = this->nodes_[idx];
 
     VersionType version;
-    if constexpr (is_0_bit_free<T>)
+    if constexpr (msb_always_0<T>)
     {
       version = reinterpret_cast<const T&>(node.storage_).read_version();
     }
@@ -351,7 +339,7 @@ public:
     do
     {
       VersionType version;
-      if constexpr (is_0_bit_free<T>)
+      if constexpr (msb_always_0<T>)
       {
         version = reinterpret_cast<const T&>(node.storage_).read_version();
       }
@@ -379,7 +367,7 @@ public:
     Node& node = this->nodes_[idx];
 
     VersionType version;
-    if constexpr (is_0_bit_free<T>)
+    if constexpr (msb_always_0<T>)
     {
       version = reinterpret_cast<const T&>(node.storage_).read_version();
     }

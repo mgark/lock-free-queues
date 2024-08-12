@@ -17,6 +17,7 @@
 #include "common_test_utils.h"
 #include "detail/common.h"
 #include "detail/consumer.h"
+#include "detail/single_bit_reuse.h"
 #include <assert.h>
 #include <catch2/catch_all.hpp>
 #include <mpmc.h>
@@ -47,7 +48,7 @@ TEST_CASE("SPMC functional test")
 
 TEST_CASE("SPMC functional test - re-use bit")
 {
-  using MsgType = IntegralMSBAlways0<uint32_t>;
+  using MsgType = integral_msb_always_0<uint32_t>;
   using Queue = SPMCMulticastQueueReliableBounded<MsgType, 2>;
 
   Queue q(8);
