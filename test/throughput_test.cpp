@@ -30,6 +30,7 @@
 #include "detail/common.h"
 #include "detail/consumer.h"
 #include "detail/producer.h"
+#include "detail/single_bit_reuse.h"
 
 TEST_CASE("SPSC throughput test")
 {
@@ -264,6 +265,117 @@ TEST_CASE("Synchronized MPMC throughput test")
           while (n <= _MSG_PER_CONSUMER_)
           {
             if (p.emplace(OrderNonTrivial{n, 1U, 100.1, 'B'}) == ProduceReturnCode::Published)
+              ++n;
+          }
+#ifdef _TRACE_STATS_
+          std::scoped_lock lock(guard);
+          TLOG << "\n producer #[" << producer_id
+               << "] cas_to_pub ratio: " << (double)p.stats().cas_num / p.stats().pub_num
+               << " pub_num: " << p.stats().pub_num << " cas_num: " << p.stats().cas_num;
+#endif
+
+          ++publishers_completed_num;
+        }
+        catch (const std::exception& e)
+        {
+          TLOG << "\n got exception " << e.what();
+        }
+      }));
+  }
+
+  while (publishers_completed_num < _MAX_PUBLISHERS_)
+    usleep(100000);
+
+  queue.stop();
+
+  for (auto& p : producers)
+    p.join();
+
+  for (auto& c : consumers)
+    c.join();
+}
+
+TEST_CASE("Synchronized MPMC throughput test - using object which allows single bit re-use")
+{
+  std::string s;
+  std::mutex guard;
+  constexpr size_t _MAX_CONSUMERS_ = 3;
+  constexpr size_t _MAX_PUBLISHERS_ = 3;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
+  constexpr size_t _MSG_PER_CONSUMER_ = 4000000;
+  constexpr size_t N = _MAX_PUBLISHERS_ * _MSG_PER_CONSUMER_;
+
+  using MsgType = integral_msb_always_0<uint32_t>;
+  using Queue = SPMCMulticastQueueReliableBounded<MsgType, _MAX_CONSUMERS_, _MAX_PUBLISHERS_>;
+  Queue queue(_PUBLISHER_QUEUE_SIZE);
+
+  size_t from = std::chrono::system_clock::now().time_since_epoch().count();
+  std::vector<std::thread> consumers;
+  std::atomic_int consumer_joined_num{0};
+
+  TLOG << "\n  " << Catch::getResultCapture().getCurrentTestName() << "\n";
+  for (size_t consumer_id = 0; consumer_id < _MAX_CONSUMERS_; ++consumer_id)
+  {
+    consumers.push_back(std::thread(
+      [&queue, consumer_id, &guard, N, _MSG_PER_CONSUMER_, &consumer_joined_num]()
+      {
+        try
+        {
+          ConsumerBlocking<Queue> c(queue);
+          ++consumer_joined_num;
+          auto begin = std::chrono::system_clock::now();
+          size_t totalMsgConsumed = 0;
+          bool is_consumer_done = false;
+          while (!is_consumer_done)
+          {
+            auto r = c.consume(
+              [&](const MsgType& r) mutable
+              {
+                totalMsgConsumed += r;
+                if (totalMsgConsumed >= N) // consumed all messages!
+                  is_consumer_done = true;
+              });
+            if (r == ConsumeReturnCode::Stopped)
+              is_consumer_done = true;
+          }
+
+          REQUIRE(totalMsgConsumed > 0);
+          std::scoped_lock lock(guard);
+          auto end = std::chrono::system_clock::now();
+          auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
+          auto avg_time_ns = (totalMsgConsumed ? (nanos.count() / totalMsgConsumed) : 0);
+          TLOG << "\n Consumer [" << consumer_id << "] raw time per one item: " << avg_time_ns << "ns"
+               << "total_time_ms=" << nanos / (1000 * 1000) << " consumed [" << totalMsgConsumed << " items";
+          CHECK(totalMsgConsumed == N);
+          CHECK(avg_time_ns < 2000);
+        }
+        catch (const std::exception& e)
+        {
+          TLOG << "\n got exception " << e.what();
+        }
+      }));
+  }
+
+  while (consumer_joined_num.load() < _MAX_CONSUMERS_)
+    ;
+
+  std::vector<std::thread> producers;
+  std::atomic_int publishers_completed_num{0};
+  for (size_t producer_id = 0; producer_id < _MAX_PUBLISHERS_; ++producer_id)
+  {
+    producers.emplace_back(std::thread(
+      [&, producer_id]()
+      {
+        try
+        {
+          ProducerBlocking<Queue> p(queue);
+          queue.start();
+
+          auto begin = std::chrono::system_clock::now();
+          size_t n = 1;
+          while (n <= _MSG_PER_CONSUMER_)
+          {
+            if (p.emplace(1u) == ProduceReturnCode::Published)
               ++n;
           }
 #ifdef _TRACE_STATS_

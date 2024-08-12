@@ -1,6 +1,7 @@
 #include "common_test_utils.h"
 #include "detail/common.h"
 #include "detail/producer.h"
+#include "detail/single_bit_reuse.h"
 #include <algorithm>
 #include <assert.h>
 #include <catch2/catch_all.hpp>

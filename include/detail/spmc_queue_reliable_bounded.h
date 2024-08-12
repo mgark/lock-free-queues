@@ -562,30 +562,22 @@ public:
 
     NodeAllocTraits::construct(this->alloc_, static_cast<T*>(storage), std::forward<Args>(args)...);
 
-    if constexpr (_MAX_PRODUCER_N_ > 1)
+    if constexpr (msb_always_0<T>)
     {
-      // cannot estimate properly version as consumer can join / detach dynamically...
-      node.version_.store(version ^ version_type{1u}, std::memory_order_release);
-    }
-    else
-    {
-      if constexpr (msb_always_0<T>)
+      T& obj = reinterpret_cast<T&>(node.storage_);
+      // newly constructed object must already have set re-used bit to 0!
+      if (0 == version)
       {
-        T& obj = reinterpret_cast<T&>(node.storage_);
-        // newly constructed object must already have set re-used bit to 0!
-        if (0 == version)
-        {
-          obj.flip_version();
-        }
-        else
-        {
-          obj.release_version();
-        }
+        obj.flip_version();
       }
       else
       {
-        node.version_.store(version ^ version_type{1u}, std::memory_order_release);
+        obj.release_version();
       }
+    }
+    else
+    {
+      node.version_.store(version ^ version_type{1u}, std::memory_order_release);
     }
 
     if constexpr (_MAX_PRODUCER_N_ > 1)

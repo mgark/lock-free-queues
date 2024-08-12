@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <concepts>
+#include <cstdint>
 #include <limits>
 #include <stdexcept>
 #include <type_traits>
@@ -35,7 +36,7 @@ template <class T>
 inline auto single_bit_1_masks = generate_bit_masks_with_single_bit_1<T>();
 
 template <class T>
-inline constexpr size_t MsbIdx; // = std::numeric_limits<T>::min();
+inline constexpr size_t MsbIdx;
 
 template <std::unsigned_integral T>
 inline constexpr size_t MsbIdx<T> = 0;
