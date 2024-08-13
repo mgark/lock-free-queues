@@ -53,8 +53,12 @@ concept msb_always_0 = requires(T v)
   {
     v.read_version()
     } -> std::same_as<std::uint8_t>;
-  {v.flip_version()};
-  {v.release_version()};
+  {
+    v.flip_version()
+    } -> std::same_as<void>;
+  {
+    v.release_version()
+    } -> std::same_as<void>;
 };
 
 template <std::integral T>
@@ -71,6 +75,12 @@ public:
   {
     // let's make sure MSB bit is actually set to 0!
     assert(0 == (v & single_bit_1_masks<T>[MsbIdx<T>]));
+  }
+
+  integral_msb_always_0& operator=(T other)
+  {
+    val = other;
+    return *this;
   }
 
   operator T() const
