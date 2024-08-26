@@ -128,34 +128,13 @@ private:
   struct ProducerContext
   {
     alignas(64) std::atomic<size_t> producer_idx_;
-
-#ifdef _TRACE_PRODUCER_IDX_
-    struct alignas(64) ProducerProgress
-    {
-      std::atomic<size_t> idx;
-    };
-
-    std::array<ProducerProgress, _MAX_PRODUCER_N_> producer_progress_;
-#endif
-
     alignas(64) std::array<std::atomic<bool>, _MAX_PRODUCER_N_> producer_registry_;
     alignas(64) Me& host_;
 
     ProducerContext(Me& host) : host_(host)
     {
-
-#ifdef _TRACE_PRODUCER_IDX_
-      for (auto it = std::begin(producer_progress_); it != std::end(producer_progress_); ++it)
-        it->idx.store(PRODUCER_IS_WELCOME, std::memory_order_release);
-#endif
-
       std::fill(std::begin(producer_registry_), std::end(producer_registry_), 0 /*unlocked*/);
-
-#ifdef _TRACE_PRODUCER_IDX_
-      producer_idx_.store(std::numeric_limits<size_t>::max(), std::memory_order_release);
-#else
       producer_idx_.store(0, std::memory_order_release);
-#endif
     }
 
     template <class Producer>
@@ -164,54 +143,22 @@ private:
       // for single producer relaxed ordering should be enough since this would be
       // called after first successful publishing already done by this producer which
       // would establish the right ordering with previous producer
-#ifdef _TRACE_PRODUCER_IDX_
-      size_t new_idx = 1 + producer_idx_.load(std::memory_order_relaxed);
-      producer_idx_.store(new_idx, std::memory_order_relaxed);
-#else
       size_t new_idx = producer_idx_.load(std::memory_order_relaxed);
       producer_idx_.store(new_idx + 1, std::memory_order_relaxed);
-#endif
       return new_idx;
     }
 
     template <class Producer>
     size_t aquire_idx(Producer& p) requires(_MAX_PRODUCER_N_ > 1)
     {
-#ifdef _TRACE_PRODUCER_IDX_
-      size_t old_idx;
-      size_t new_idx;
-      do
-      {
-        old_idx = producer_idx_.load(std::memory_order_acquire);
-        new_idx = old_idx + 1;
-        host_.producer_ctx_.producer_progress_[p.producer_id_].idx.store(new_idx, std::memory_order_release);
-  #ifdef _TRACE_STATS_
-        ++p.stats().cas_num;
-  #endif
-        /// new_idx = producer_idx_.fetch_add(1, std::memory_order_release);
-      } while (!producer_idx_.compare_exchange_strong(old_idx, new_idx, std::memory_order_acq_rel,
-                                                      std::memory_order_acquire));
-      return new_idx;
-#else
+
       return producer_idx_.fetch_add(1u, std::memory_order_acq_rel);
-#endif
     }
 
     template <class Producer>
     size_t aquire_first_idx(Producer& p) requires(_MAX_PRODUCER_N_ == 1)
     {
       // we use CAS here just in case producer has detached in one thread, but than shortly attached in another!
-
-#ifdef _TRACE_PRODUCER_IDX_
-      size_t new_idx;
-      size_t old_idx = producer_idx_.load(std::memory_order_acquire);
-      do
-      {
-        new_idx = 1 + old_idx;
-      } while (!producer_idx_.compare_exchange_strong(old_idx, new_idx, std::memory_order_release,
-                                                      std::memory_order_acquire));
-      return new_idx;
-#else
       size_t new_idx;
       size_t old_idx = producer_idx_.load(std::memory_order_acquire);
       do
@@ -220,8 +167,6 @@ private:
       } while (!producer_idx_.compare_exchange_strong(old_idx, new_idx, std::memory_order_acq_rel,
                                                       std::memory_order_acquire));
       return old_idx;
-
-#endif
     }
 
     template <class Producer>
@@ -487,9 +432,6 @@ public:
     bool is_locked = locker.load(std::memory_order_acquire);
     if (is_locked)
     {
-#ifdef _TRACE_PRODUCER_IDX_
-      this->producer_ctx_.producer_progress_.at(producer_id).idx.store(PRODUCER_IS_WELCOME, std::memory_order_release);
-#endif
       if (locker.compare_exchange_strong(is_locked, false, std::memory_order_release, std::memory_order_relaxed))
       {
         // this->consumers_pending_dettach_.fetch_add(1, std::memory_order_release);
@@ -501,21 +443,6 @@ public:
 
         Spinlock::scoped_lock autolock(this->slow_path_guard_);
         // It shall be safe to update max consumer idx as the attach function would restore max consumer idx shall one appear right after.
-#ifdef _TRACE_PRODUCER_IDX_
-        auto new_max_producer_id = _MAX_PRODUCER_N_ - 1;
-        while (new_max_producer_id >= 0 && new_max_producer_id != std::numeric_limits<size_t>::max())
-        {
-          if (this->producer_ctx_.producer_progress_.at(new_max_producer_id).idx.load(std::memory_order_relaxed) ==
-              PRODUCER_IS_WELCOME)
-            --new_max_producer_id;
-          else
-          {
-            break;
-          }
-        }
-
-        this->next_max_producer_id_.store(new_max_producer_id + 1, std::memory_order_release);
-#endif
         return true;
       }
       else
@@ -549,24 +476,9 @@ public:
     bool no_active_consumers =
       min_next_consumer_idx == CONSUMER_IS_WELCOME; // TODO: fix for synchronized consumers!
 
-#ifdef _TRACE_PRODUCER_IDX_
-    bool slow_producer;
-    size_t min_next_producer_idx = producer.get_min_next_producer_idx_cached();
-#endif
-
     bool no_free_slot;
     bool slow_consumer =
       min_next_consumer_idx > original_idx || (original_idx - min_next_consumer_idx >= this->n_);
-#ifdef _TRACE_PRODUCER_IDX_
-    if constexpr (_MAX_PRODUCER_N_ > 1)
-    {
-      bool no_active_producers = min_next_producer_idx == PRODUCER_IS_WELCOME;
-      slow_producer =
-        min_next_producer_idx > original_idx || original_idx - min_next_producer_idx >= this->n_;
-      no_free_slot = no_active_consumers || slow_consumer || no_active_producers || slow_producer;
-    }
-    else
-#endif
     {
       no_free_slot = no_active_consumers || slow_consumer;
     }
@@ -603,58 +515,6 @@ public:
         CONSUMER_IS_WELCOME; // TODO: fix this for synchronized consumers!
       slow_consumer = original_idx - min_next_consumer_idx_local >= this->n_;
 
-#ifdef _TRACE_PRODUCER_IDX_
-      if constexpr (_MAX_PRODUCER_N_ > 1)
-      {
-        // need to track min producer idx so that we must ensure that the current
-        // producer thread has synchronized with previous producer on the same node
-        auto next_max_producer_id = this->next_max_producer_id_.load(std::memory_order_acquire);
-        for (size_t i = 0; i < next_max_producer_id; ++i)
-        {
-          min_next_producer_idx = this->producer_ctx_.producer_progress_[i].idx.load(std::memory_order_acquire);
-          if (min_next_producer_idx < PRODUCER_JOINED)
-          {
-            min_next_producer_idx_local = std::min(min_next_producer_idx_local, min_next_producer_idx);
-          }
-        }
-
-        assert(min_next_producer_idx_local != PRODUCER_IS_WELCOME);
-      }
-
-      if constexpr (_MAX_PRODUCER_N_ > 1)
-      {
-        producer.cache_min_next_producer_idx(min_next_producer_idx_local);
-        // producer idx tracking was necessary in order to make sure producers won't override
-        // each other since if you use bit re-use logic than there are two publishing events!
-        slow_producer = original_idx - min_next_producer_idx_local >= this->n_;
-        if (slow_producer)
-        {
-          if constexpr (blocking)
-          {
-            if (!no_active_consumers && !slow_consumer)
-            {
-              // technically it shall never happen (at least to break the logic)  "happens before" relationship is transitive. Before Producer1 publishes an item
-              // it would set its Idx in the producer_progress_ array. That Idx won't get cleared until Producer1 fully finishes pushing
-              // an item and before Producer1 releases "version" publishing. Consumer1 would look at "version" change and would only consume
-              // an item if it has changed! There is a clear "happens-before" relanships between Producer1 and Consumer1, but also once Consumer1
-              // finishes consuming a batch of items it would publish its next consume-to idx with Release memory order. Now, if Producer2 reads
-              // consume-to idx for all the consumers and if it would read one from Consume1, there would be "happens-before" relationship
-              // between Consumer 1 and Producer 2, which would create a transitive happens before between Producer1 and Producer2
-              // since in Consumer1 reading version change is *sequence before* committing its next consume-to index.
-              // That transitive relationship between Producer1 and Producer2 would ensure producer_progress index that Producer2 reads from
-              // Producer1 would read producer_progress index "at least" as Consumer1 progress index - ***it may read later values too,
-              // but not earlier ones***! NOTE IT CAN BE FALSE POSITIVE AS WELL IF PRODUCER INDICATED PROGRESS IDX BUT COULD NOT LOCK THE IDX!
-            }
-          }
-          else
-          {
-            // we must also lock at min_producer_idx since after all this producer has not published
-            // anything return ProduceReturnCode::SlowPublisher;
-          }
-        }
-      }
-#endif
-
       no_free_slot = (no_active_consumers || slow_consumer);
 
       if (no_active_consumers)
@@ -663,13 +523,6 @@ public:
       }
 
       assert(original_idx >= min_next_consumer_idx_local);
-
-#ifdef _TRACE_PRODUCER_IDX_
-      if constexpr (_MAX_PRODUCER_N_ > 1)
-      {
-        assert(original_idx >= min_next_producer_idx_local);
-      }
-#endif
 
       if constexpr (!blocking)
       {
@@ -741,13 +594,6 @@ public:
       NodeAllocTraits::construct(this->alloc_, static_cast<T*>(storage), std::forward<Args>(args)...);
       node.version_.store(version ^ version_type{1u}, std::memory_order_release);
     }
-
-#ifdef _TRACE_PRODUCER_IDX_
-    if constexpr (_MAX_PRODUCER_N_ > 1)
-    {
-      unlock_min_producer_idx(original_idx, producer);
-    }
-#endif
 
 #ifdef _TRACE_STATS_
     ++producer.stats().pub_num;

@@ -109,12 +109,7 @@ public:
       {
         Node& node = this->nodes_[i];
         void* storage = node.storage_;
-
-#ifdef _TRACE_PRODUCER_IDX_
-        if (i < producer_last_idx + 1)
-#else
         if (i < producer_last_idx)
-#endif
         {
           NodeAllocTraits::destroy(alloc_, static_cast<T*>(storage));
         }
