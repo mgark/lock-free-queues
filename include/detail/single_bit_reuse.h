@@ -1,3 +1,20 @@
+
+/*
+ * Copyright(c) 2024-present Mykola Garkusha.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #pragma once
 
 #include <array>
@@ -44,9 +61,10 @@ inline constexpr size_t MsbIdx<T> = 0;
 template <std::signed_integral T>
 inline constexpr size_t MsbIdx<T> = 1; // two complement is officially stated in the standard as of C++20
 
-template <class T>
+template <class T, class Ptr = T*>
 concept msb_always_0 = requires(T v)
 {
+  requires std::atomic<typename T::type>::is_always_lock_free;
   {
     typename T::has_free_bit_0 {}
     } -> std::same_as<std::true_type>;
@@ -54,10 +72,7 @@ concept msb_always_0 = requires(T v)
     v.read_version()
     } -> std::same_as<std::uint8_t>;
   {
-    v.flip_version()
-    } -> std::same_as<void>;
-  {
-    v.release_version()
+    v.store(T{0})
     } -> std::same_as<void>;
 };
 
@@ -104,18 +119,18 @@ public:
     // return (val & single_1_bit_masks<T>[MsbIdx<T>]) ? uint8_t{1u} : uint8_t{0};
   }
 
-  void flip_version()
+  void store(T new_val)
   {
-    T tmp = val;
-    tmp ^= single_bit_1_masks<T>[MsbIdx<T>];
-    std::atomic_ref<T> atomic_val(val);
-    atomic_val.store(tmp, std::memory_order_release);
-    // val ^= single_1_bit_masks<T>[MsbIdx<T>];
-  }
+    std::atomic_ref<T> atomic_val(const_cast<T&>(val));
+    T old_val = atomic_val.load(std::memory_order_acquire);
 
-  void release_version()
-  {
-    std::atomic_ref<T> atomic_val(val);
-    atomic_val.store(val, std::memory_order_release);
+    auto old_version = (old_val & single_bit_1_masks<T>[MsbIdx<T>]) ? uint8_t{1u} : uint8_t{0};
+    if (0 == old_version)
+    {
+      // set new version!
+      new_val ^= single_bit_1_masks<T>[MsbIdx<T>];
+    }
+
+    atomic_val.store(new_val, std::memory_order_release);
   }
 };

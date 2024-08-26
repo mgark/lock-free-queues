@@ -88,6 +88,7 @@ enum class QueueState
 constexpr size_t CONSUMER_IS_WELCOME = std::numeric_limits<size_t>::max();
 constexpr size_t CONSUMER_JOIN_REQUESTED = CONSUMER_IS_WELCOME - 1;
 constexpr size_t CONSUMER_JOIN_INPROGRESS = CONSUMER_JOIN_REQUESTED - 2;
+constexpr size_t NEXT_CONSUMER_IDX_NEEDED = CONSUMER_JOIN_INPROGRESS - 3;
 
 constexpr size_t PRODUCER_IS_WELCOME = std::numeric_limits<size_t>::max();
 constexpr size_t PRODUCER_JOIN_REQUESTED = PRODUCER_IS_WELCOME - 1;
@@ -153,3 +154,5 @@ byte_with_one_0 = ~std::byte(uint8_t{1u} << (7 - ith_bit_idx)); val[byte_idx] = 
 //#define _DISABLE_UNRELIABLE_MULTICAST_TEST_
 //#define _DISABLE_ADAPTIVE_QUEUE_TEST_
 //#define _TRACE_STATS_
+#define _EXTRA_RUNTIME_VERIFICATION_
+//#define _TRACE_PRODUCER_IDX_

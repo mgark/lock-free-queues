@@ -25,11 +25,13 @@
 #include <string>
 #include <type_traits>
 
-template <class T, class Derived, size_t _MAX_CONSUMER_N_, size_t _BATCH_NUM_, class Allocator, class VersionType>
+template <class T, class Derived, size_t _MAX_CONSUMER_N_, size_t _BATCH_NUM_, bool _MULTICAST_, class Allocator, class VersionType>
 class SPMCMulticastQueueBase
 {
 public:
   using type = T;
+  static constexpr bool _synchronized_consumer_ = _MAX_CONSUMER_N_ > 1 && !_MULTICAST_;
+  static constexpr bool _reuse_single_bit_from_object_ = msb_always_0<T> && not _synchronized_consumer_;
 
   struct ConsumerTicket
   {
@@ -61,7 +63,7 @@ protected:
     alignas(T) std::byte storage_[sizeof(T)];
   };
 
-  using Node = std::conditional_t<msb_always_0<T>, NodeWithoutVersion, NodeWithVersion>;
+  using Node = std::conditional_t<_reuse_single_bit_from_object_, NodeWithoutVersion, NodeWithVersion>;
   using NodeAllocator = typename std::allocator_traits<Allocator>::template rebind_alloc<Node>;
   using NodeAllocTraits = std::allocator_traits<NodeAllocator>;
   static_assert(std::is_default_constructible_v<Node>, "Node must be default-constructible");
@@ -107,7 +109,12 @@ public:
       {
         Node& node = this->nodes_[i];
         void* storage = node.storage_;
+
+#ifdef _TRACE_PRODUCER_IDX_
         if (i < producer_last_idx + 1)
+#else
+        if (i < producer_last_idx)
+#endif
         {
           NodeAllocTraits::destroy(alloc_, static_cast<T*>(storage));
         }
@@ -143,13 +150,16 @@ public:
   {
     QueueState state;
     ConsumeReturnCode r;
-    size_t idx = consumer.consumer_next_idx_ & consumer.idx_mask_;
+    size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
+    size_t idx = original_idx & consumer.idx_mask_;
     Node& node = this->nodes_[idx];
+    if constexpr (_synchronized_consumer_)
+      idx = original_idx;
 
     do
     {
       VersionType version;
-      if constexpr (msb_always_0<T>)
+      if constexpr (_reuse_single_bit_from_object_)
       {
         version = reinterpret_cast<const T&>(node.storage_).read_version();
       }
@@ -177,11 +187,14 @@ public:
   template <class C>
   ConsumeReturnCode consume_raw_non_blocking(size_t& queue_idx, void* dest, C& consumer)
   {
-    size_t idx = consumer.consumer_next_idx_ & consumer.idx_mask_;
+    size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
+    size_t idx = original_idx & consumer.idx_mask_;
     Node& node = this->nodes_[idx];
+    if constexpr (_synchronized_consumer_)
+      idx = original_idx;
 
     VersionType version;
-    if constexpr (msb_always_0<T>)
+    if constexpr (_reuse_single_bit_from_object_)
     {
       version = reinterpret_cast<const T&>(node.storage_).read_version();
     }
@@ -214,13 +227,18 @@ public:
   {
     ConsumeReturnCode r;
     QueueState state;
-    size_t idx = consumer.consumer_next_idx_ & consumer.idx_mask_;
+
+    size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
+    size_t idx = original_idx & consumer.idx_mask_;
     Node& node = this->nodes_[idx];
+
+    if constexpr (_synchronized_consumer_)
+      idx = original_idx;
 
     do
     {
       VersionType version;
-      if constexpr (msb_always_0<T>)
+      if constexpr (_reuse_single_bit_from_object_)
       {
         version = reinterpret_cast<const T&>(node.storage_).read_version();
       }
@@ -248,11 +266,12 @@ public:
   template <class C, class F>
   ConsumeReturnCode consume_non_blocking(size_t& queue_idx, C& consumer, F&& f)
   {
-    size_t idx = consumer.consumer_next_idx_ & consumer.idx_mask_;
-    Node& node = this->nodes_[idx];
+    size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
+    size_t idx = original_idx & consumer.idx_mask_;
 
     VersionType version;
-    if constexpr (msb_always_0<T>)
+    Node& node = this->nodes_[idx];
+    if constexpr (_reuse_single_bit_from_object_)
     {
       version = reinterpret_cast<const T&>(node.storage_).read_version();
     }
@@ -260,6 +279,9 @@ public:
     {
       version = node.version_.load(std::memory_order_acquire);
     }
+
+    if constexpr (_synchronized_consumer_)
+      idx = original_idx;
 
     auto r = static_cast<Derived&>(*this).consume_by_func(
       idx, queue_idx, node, version, consumer,
@@ -281,7 +303,7 @@ public:
   }
 
   template <class C>
-  const T* peek_blocking(size_t queue_idx, C& consumer) const
+  const T* peek_blocking(size_t queue_idx, C& consumer) const requires(!_synchronized_consumer_)
   {
     size_t idx = consumer.consumer_next_idx_ & consumer.idx_mask_;
     Node& node = this->nodes_[idx];
@@ -290,7 +312,7 @@ public:
     do
     {
       VersionType version;
-      if constexpr (msb_always_0<T>)
+      if constexpr (_reuse_single_bit_from_object_)
       {
         version = reinterpret_cast<const T&>(node.storage_).read_version();
       }
@@ -310,13 +332,13 @@ public:
   }
 
   template <class C>
-  const T* peek_non_blocking(size_t& queue_idx, C& consumer) const
+  const T* peek_non_blocking(size_t& queue_idx, C& consumer) const requires(!_synchronized_consumer_)
   {
     size_t idx = consumer.consumer_next_idx_ & consumer.idx_mask_;
     Node& node = this->nodes_[idx];
 
     VersionType version;
-    if constexpr (msb_always_0<T>)
+    if constexpr (_reuse_single_bit_from_object_)
     {
       version = reinterpret_cast<const T&>(node.storage_).read_version();
     }
@@ -332,14 +354,18 @@ public:
   ConsumeReturnCode skip_blocking(size_t& queue_idx, C& consumer)
   {
     ConsumeReturnCode r;
-    size_t idx = consumer.consumer_next_idx_ & consumer.idx_mask_;
+    size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
+    size_t idx = original_idx & consumer.idx_mask_;
     Node& node = this->nodes_[idx];
     QueueState state;
+
+    if constexpr (_synchronized_consumer_)
+      idx = original_idx;
 
     do
     {
       VersionType version;
-      if constexpr (msb_always_0<T>)
+      if constexpr (_reuse_single_bit_from_object_)
       {
         version = reinterpret_cast<const T&>(node.storage_).read_version();
       }
@@ -363,11 +389,14 @@ public:
   template <class C>
   ConsumeReturnCode skip_non_blocking(size_t& queue_idx, C& consumer)
   {
-    size_t idx = consumer.consumer_next_idx_ & consumer.idx_mask_;
+    size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
+    size_t idx = original_idx & consumer.idx_mask_;
     Node& node = this->nodes_[idx];
+    if constexpr (_synchronized_consumer_)
+      idx = original_idx;
 
     VersionType version;
-    if constexpr (msb_always_0<T>)
+    if constexpr (_reuse_single_bit_from_object_)
     {
       version = reinterpret_cast<const T&>(node.storage_).read_version();
     }
@@ -395,14 +424,22 @@ public:
   size_t size() const { return capacity(); }
 
   template <class C>
-  bool empty(size_t& queue_idx, C& consumer)
+  bool empty(size_t& queue_idx, C& consumer) requires(!_synchronized_consumer_)
   {
     return consumer.consumer_next_idx_ >= static_cast<const Derived*>(this)->get_producer_idx() ||
       !is_running();
   }
 
   template <class C>
+  bool empty(size_t& queue_idx, C& consumer) requires(_synchronized_consumer_)
+  {
+    return this->get_consumer_next_idx() >= static_cast<const Derived*>(this)->get_producer_idx() ||
+      !is_running();
+  }
+
+  template <class C>
   const T* peek(size_t& queue_idx, Node& node, auto version, C& consumer) const
+    requires(!_synchronized_consumer_)
   {
     return static_cast<const Derived*>(this)->peek(node, version, consumer);
   }

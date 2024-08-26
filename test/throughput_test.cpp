@@ -16,7 +16,9 @@
 
 #include <atomic>
 #include <catch2/catch_all.hpp>
+#include <cstdint>
 #include <iostream>
+#include <limits>
 #include <list>
 #include <map>
 #include <mpmc.h>
@@ -301,11 +303,12 @@ TEST_CASE("Synchronized MPMC throughput test - using object which allows single 
   std::mutex guard;
   constexpr size_t _MAX_CONSUMERS_ = 3;
   constexpr size_t _MAX_PUBLISHERS_ = 3;
-  constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
-  constexpr size_t _MSG_PER_CONSUMER_ = 4000000;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 64;
+  constexpr size_t _MSG_PER_CONSUMER_ = 5000000;
   constexpr size_t N = _MAX_PUBLISHERS_ * _MSG_PER_CONSUMER_;
 
-  using MsgType = integral_msb_always_0<uint32_t>;
+  using MsgType = integral_msb_always_0<size_t>;
+  // using MsgType = size_t;
   using Queue = SPMCMulticastQueueReliableBounded<MsgType, _MAX_CONSUMERS_, _MAX_PUBLISHERS_>;
   Queue queue(_PUBLISHER_QUEUE_SIZE);
 
@@ -326,12 +329,29 @@ TEST_CASE("Synchronized MPMC throughput test - using object which allows single 
           auto begin = std::chrono::system_clock::now();
           size_t totalMsgConsumed = 0;
           bool is_consumer_done = false;
+          std::vector<size_t> consumed;
           while (!is_consumer_done)
           {
             auto r = c.consume(
               [&](const MsgType& r) mutable
               {
-                totalMsgConsumed += r;
+                size_t r_val = r;
+                uint32_t idx;
+                uint32_t producer;
+                memcpy(&idx, &r_val, 4);
+                memcpy(&producer, ((char*)&r_val) + 4, 4);
+                if (idx != totalMsgConsumed)
+                {
+                  TLOG << "consumer=" << consumer_id << "read_val=" << idx << " target=" << totalMsgConsumed;
+                  TLOG.flush();
+                  std::abort();
+                }
+                else
+                {
+                  consumed.push_back(producer);
+                }
+
+                ++totalMsgConsumed;
                 if (totalMsgConsumed >= N) // consumed all messages!
                   is_consumer_done = true;
               });
@@ -346,6 +366,7 @@ TEST_CASE("Synchronized MPMC throughput test - using object which allows single 
           auto avg_time_ns = (totalMsgConsumed ? (nanos.count() / totalMsgConsumed) : 0);
           TLOG << "\n Consumer [" << consumer_id << "] raw time per one item: " << avg_time_ns << "ns"
                << "total_time_ms=" << nanos / (1000 * 1000) << " consumed [" << totalMsgConsumed << " items";
+          TLOG.flush();
           CHECK(totalMsgConsumed == N);
           CHECK(avg_time_ns < 2000);
         }
@@ -375,16 +396,18 @@ TEST_CASE("Synchronized MPMC throughput test - using object which allows single 
           size_t n = 1;
           while (n <= _MSG_PER_CONSUMER_)
           {
-            if (p.emplace(1u) == ProduceReturnCode::Published)
+            if (p.emplace_idx() == ProduceReturnCode::Published)
               ++n;
           }
+
 #ifdef _TRACE_STATS_
           std::scoped_lock lock(guard);
           TLOG << "\n producer #[" << producer_id
                << "] cas_to_pub ratio: " << (double)p.stats().cas_num / p.stats().pub_num
                << " pub_num: " << p.stats().pub_num << " cas_num: " << p.stats().cas_num;
 #endif
-
+          TLOG << "\n producer=" << producer_id << " completed ";
+          TLOG.flush();
           ++publishers_completed_num;
         }
         catch (const std::exception& e)
@@ -822,6 +845,143 @@ TEST_CASE("SingleThreaded Anycast MPMC throughput test")
   size_t actual_msg_consumed_num = std::accumulate(totalMsgConsumed, totalMsgConsumed + _MAX_CONSUMERS_, 0);
   TLOG << "\n total_msg_consumed_num=" << actual_msg_consumed_num << "\n";
   CHECK(actual_msg_consumed_num == N);
+}
+
+TEST_CASE("Synchronized Anycast MPMC throughput test")
+{
+  std::string s;
+  std::mutex guard;
+  constexpr size_t _MAX_CONSUMERS_ = 3;
+  constexpr size_t _MAX_PUBLISHERS_ = 3;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 8;
+  constexpr size_t _MSG_PER_CONSUMER_ = 50000000;
+  constexpr size_t N = _MAX_PUBLISHERS_ * _MSG_PER_CONSUMER_;
+
+  using MsgType = size_t;
+  // using MsgType = size_t;
+  constexpr bool _MULTICAST_ = false;
+  using Queue = SPMCMulticastQueueReliableBounded<MsgType, _MAX_CONSUMERS_, _MAX_PUBLISHERS_, 4, _MULTICAST_>;
+  Queue queue(_PUBLISHER_QUEUE_SIZE);
+
+  std::vector<std::thread> consumers;
+  std::atomic_int consumer_joined_num{0};
+  std::array<std::atomic<size_t>, _MAX_CONSUMERS_> per_consumer_sum{0, 0, 0};
+  std::vector<size_t> consumed(N + 1, std::numeric_limits<uint32_t>::max());
+
+  TLOG << "\n  " << Catch::getResultCapture().getCurrentTestName() << "\n";
+  for (size_t consumer_id = 0; consumer_id < _MAX_CONSUMERS_; ++consumer_id)
+  {
+    consumers.push_back(std::thread(
+      [&queue, &consumed, consumer_id, &guard, N, &per_consumer_sum, _MSG_PER_CONSUMER_, &consumer_joined_num]()
+      {
+        try
+        {
+          ConsumerBlocking<Queue> c(queue);
+          ++consumer_joined_num;
+          auto begin = std::chrono::system_clock::now();
+          size_t msgConsumedNum = 0;
+          bool is_consumer_done = false;
+          while (!is_consumer_done)
+          {
+            auto r = c.consume(
+              [&](const MsgType& r) mutable
+              {
+                size_t r_val = r;
+                uint32_t idx;
+                uint32_t producer;
+                memcpy(&idx, &r_val, 4);
+                memcpy(&producer, ((char*)&r_val) + 4, 4);
+                per_consumer_sum[consumer_id].store(
+                  per_consumer_sum[consumer_id].load(std::memory_order_relaxed) + idx, std::memory_order_release);
+                ++msgConsumedNum;
+              });
+            if (r == ConsumeReturnCode::Stopped)
+              is_consumer_done = true;
+          }
+
+          std::scoped_lock lock(guard);
+          auto end = std::chrono::system_clock::now();
+          auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
+          auto avg_time_ns = (msgConsumedNum ? (nanos.count() / msgConsumedNum) : 0);
+          TLOG << "\n Consumer [" << consumer_id << "] raw time per one item: " << avg_time_ns << "ns"
+               << "total_time_ms=" << nanos / (1000 * 1000) << " consumed [" << msgConsumedNum << " items";
+          TLOG.flush();
+          CHECK(avg_time_ns < 2000);
+        }
+        catch (const std::exception& e)
+        {
+          TLOG << "\n got exception " << e.what();
+        }
+      }));
+  }
+
+  while (consumer_joined_num.load() < _MAX_CONSUMERS_)
+    ;
+
+  std::vector<std::thread> producers;
+  std::atomic_int publishers_completed_num{0};
+  for (size_t producer_id = 0; producer_id < _MAX_PUBLISHERS_; ++producer_id)
+  {
+    producers.emplace_back(std::thread(
+      [&, producer_id]()
+      {
+        try
+        {
+          ProducerBlocking<Queue> p(queue);
+          queue.start();
+
+          auto begin = std::chrono::system_clock::now();
+          size_t n = 1;
+          while (n <= _MSG_PER_CONSUMER_)
+          {
+            if (p.emplace_idx() == ProduceReturnCode::Published)
+              ++n;
+          }
+
+#ifdef _TRACE_STATS_
+          std::scoped_lock lock(guard);
+          TLOG << "\n producer #[" << producer_id
+               << "] cas_to_pub ratio: " << (double)p.stats().cas_num / p.stats().pub_num
+               << " pub_num: " << p.stats().pub_num << " cas_num: " << p.stats().cas_num;
+#endif
+          TLOG << "\n producer=" << producer_id << " completed ";
+          TLOG.flush();
+          ++publishers_completed_num;
+        }
+        catch (const std::exception& e)
+        {
+          TLOG << "\n got exception " << e.what();
+        }
+      }));
+  }
+
+  while (publishers_completed_num < _MAX_PUBLISHERS_)
+    usleep(100000);
+
+  for (auto& p : producers)
+    p.join();
+
+  size_t targetSum = 0;
+  for (size_t i = 0; i < N; ++i)
+    targetSum += i;
+
+  while (1)
+  {
+    usleep(100000);
+
+    size_t actualTotalSum = 0;
+    for (const auto& v : per_consumer_sum)
+      actualTotalSum += v.load(std::memory_order_relaxed);
+    if (actualTotalSum == targetSum)
+      break;
+
+    TLOG << "checking if consumers consumed all, actualTotalSum=" << actualTotalSum << ", targetSum=" << targetSum;
+    TLOG.flush();
+  }
+
+  queue.stop();
+  for (auto& c : consumers)
+    c.join();
 }
 
 #ifndef _DISABLE_ADAPTIVE_QUEUE_TEST_

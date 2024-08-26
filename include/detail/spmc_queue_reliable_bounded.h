@@ -28,71 +28,134 @@
 #include <cstdint>
 #include <limits>
 #include <sys/types.h>
+#include <unistd.h>
 
 template <class T, size_t _MAX_CONSUMER_N_ = 8, size_t _MAX_PRODUCER_N_ = 1, size_t _BATCH_NUM_ = 4,
-          class Allocator = std::allocator<T>, class VersionType = uint8_t>
+          bool _MULTICAST_ = true, class Allocator = std::allocator<T>,
+          class VersionType = std::conditional_t<!_MULTICAST_ && (_MAX_CONSUMER_N_ > 1), size_t, uint8_t>>
 class SPMCMulticastQueueReliableBounded
-  : public SPMCMulticastQueueBase<T, SPMCMulticastQueueReliableBounded<T, _MAX_CONSUMER_N_, _MAX_PRODUCER_N_, _BATCH_NUM_, Allocator>,
-                                  _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator, VersionType>
+  : public SPMCMulticastQueueBase<T, SPMCMulticastQueueReliableBounded<T, _MAX_CONSUMER_N_, _MAX_PRODUCER_N_, _BATCH_NUM_, _MULTICAST_, Allocator>,
+                                  _MAX_CONSUMER_N_, _BATCH_NUM_, _MULTICAST_, Allocator, VersionType>
 {
+public:
+  using Base =
+    SPMCMulticastQueueBase<T, SPMCMulticastQueueReliableBounded, _MAX_CONSUMER_N_, _BATCH_NUM_, _MULTICAST_, Allocator, VersionType>;
+  using Base::_reuse_single_bit_from_object_;
+  using Base::_synchronized_consumer_;
+
+private:
   using Me =
-    SPMCMulticastQueueReliableBounded<T, _MAX_CONSUMER_N_, _MAX_PRODUCER_N_, _BATCH_NUM_, Allocator, VersionType>;
+    SPMCMulticastQueueReliableBounded<T, _MAX_CONSUMER_N_, _MAX_PRODUCER_N_, _BATCH_NUM_, _MULTICAST_, Allocator, VersionType>;
 
   static_assert(_MAX_CONSUMER_N_ > 0);
   static_assert(_MAX_PRODUCER_N_ > 0);
 
-  struct alignas(64) ConsumerProgress
+  struct ConsumerContext
   {
-    std::atomic<size_t> idx;
-    std::atomic<size_t> queue_idx;
-    std::atomic<VersionType> previous_version;
+    alignas(64) std::atomic<size_t> consumer_idx_;
+    alignas(64) Me& host_;
+
+    struct alignas(64) ConsumerProgress
+    {
+      std::atomic<size_t> idx;
+      std::atomic<size_t> queue_idx;
+      std::atomic<VersionType> previous_version;
+    };
+
+    using ConsumerProgressArray = std::array<ConsumerProgress, _MAX_CONSUMER_N_>;
+    using ConsumerRegistryArray = std::array<std::atomic<bool>, _MAX_CONSUMER_N_>;
+
+    alignas(64) ConsumerProgressArray consumers_progress_;
+    alignas(64) ConsumerRegistryArray consumers_registry_;
+
+    // these variables change somewhat infrequently
+    alignas(64) std::atomic<int> consumers_pending_attach_;
+
+    ConsumerContext(Me& host) : consumer_idx_(0), host_(host), consumers_pending_attach_(0)
+    {
+      for (auto it = std::begin(consumers_progress_); it != std::end(consumers_progress_); ++it)
+        it->idx.store(CONSUMER_IS_WELCOME, std::memory_order_release);
+
+      std::fill(std::begin(consumers_registry_), std::end(consumers_registry_), 0 /*unlocked*/);
+    }
+
+    size_t get_next_idx() const requires(!_synchronized_consumer_) { return CONSUMER_IS_WELCOME; }
+    size_t get_next_idx() const requires(_synchronized_consumer_)
+    {
+      return consumer_idx_.load(std::memory_order_acquire);
+    }
+
+    template <class Consumer>
+    size_t acquire_idx(Consumer& c) requires(!_synchronized_consumer_)
+    {
+      return c.consumer_next_idx_;
+    }
+
+    template <class Consumer>
+    size_t acquire_idx(Consumer& c) requires(_synchronized_consumer_)
+    {
+      if (c.consumer_next_idx_ == NEXT_CONSUMER_IDX_NEEDED)
+      {
+        // let's lock in our consumer next idx to the least possible idx so that
+        // producer would not overrun us
+        size_t idx = consumer_idx_.load(std::memory_order_acquire);
+        consumers_progress_[c.consumer_id_].idx.store(idx, std::memory_order_release);
+
+        size_t last_idx = consumer_idx_.fetch_add(1, std::memory_order_acq_rel);
+        if (idx < last_idx)
+        {
+          // we can improve our next consumer idx given we know global last consumer idx
+          consumers_progress_[c.consumer_id_].idx.store(last_idx, std::memory_order_release);
+        }
+
+        // as next_consumer_idx is recorded in the local consumer context, this would help
+        // non-blocking consumers to safely resume consumption
+        c.consumer_next_idx_ = last_idx;
+      }
+
+      return c.consumer_next_idx_;
+    }
+
+    // TODO: pass producer ref to guarantee it is called by producer
+    size_t acquire_first_idx(size_t consumer_id) requires(_synchronized_consumer_)
+    {
+      // it is ok to increment consumer_idx_ first before updating consumer_progress as long as
+      // acquire_first_idx is called by one of the producers
+      return consumer_idx_.fetch_add(1, std::memory_order_acq_rel);
+    }
   };
 
   struct ProducerContext
   {
     alignas(64) std::atomic<size_t> producer_idx_;
-    alignas(64) std::atomic<size_t> min_next_consumer_idx_;
-    alignas(64) std::atomic<size_t> min_next_producer_idx_;
 
+#ifdef _TRACE_PRODUCER_IDX_
     struct alignas(64) ProducerProgress
     {
       std::atomic<size_t> idx;
     };
 
     std::array<ProducerProgress, _MAX_PRODUCER_N_> producer_progress_;
+#endif
+
     alignas(64) std::array<std::atomic<bool>, _MAX_PRODUCER_N_> producer_registry_;
     alignas(64) Me& host_;
 
     ProducerContext(Me& host) : host_(host)
     {
+
+#ifdef _TRACE_PRODUCER_IDX_
       for (auto it = std::begin(producer_progress_); it != std::end(producer_progress_); ++it)
         it->idx.store(PRODUCER_IS_WELCOME, std::memory_order_release);
+#endif
 
       std::fill(std::begin(producer_registry_), std::end(producer_registry_), 0 /*unlocked*/);
 
+#ifdef _TRACE_PRODUCER_IDX_
       producer_idx_.store(std::numeric_limits<size_t>::max(), std::memory_order_release);
-      min_next_consumer_idx_.store(CONSUMER_IS_WELCOME, std::memory_order_release);
-      min_next_producer_idx_.store(PRODUCER_IS_WELCOME, std::memory_order_release);
-    }
-
-    size_t get_min_next_consumer_idx_cached() const
-    {
-      return min_next_consumer_idx_.load(std::memory_order_acquire);
-    }
-
-    size_t get_min_next_producer_idx_cached() const
-    {
-      return min_next_producer_idx_.load(std::memory_order_acquire);
-    }
-
-    void cache_min_next_consumer_idx(size_t idx)
-    {
-      min_next_consumer_idx_.store(idx, std::memory_order_release);
-    }
-
-    void cache_min_next_producer_idx(size_t idx)
-    {
-      min_next_producer_idx_.store(idx, std::memory_order_release);
+#else
+      producer_idx_.store(0, std::memory_order_release);
+#endif
     }
 
     template <class Producer>
@@ -101,14 +164,20 @@ class SPMCMulticastQueueReliableBounded
       // for single producer relaxed ordering should be enough since this would be
       // called after first successful publishing already done by this producer which
       // would establish the right ordering with previous producer
+#ifdef _TRACE_PRODUCER_IDX_
       size_t new_idx = 1 + producer_idx_.load(std::memory_order_relaxed);
       producer_idx_.store(new_idx, std::memory_order_relaxed);
+#else
+      size_t new_idx = producer_idx_.load(std::memory_order_relaxed);
+      producer_idx_.store(new_idx + 1, std::memory_order_relaxed);
+#endif
       return new_idx;
     }
 
     template <class Producer>
     size_t aquire_idx(Producer& p) requires(_MAX_PRODUCER_N_ > 1)
     {
+#ifdef _TRACE_PRODUCER_IDX_
       size_t old_idx;
       size_t new_idx;
       do
@@ -116,26 +185,43 @@ class SPMCMulticastQueueReliableBounded
         old_idx = producer_idx_.load(std::memory_order_acquire);
         new_idx = old_idx + 1;
         host_.producer_ctx_.producer_progress_[p.producer_id_].idx.store(new_idx, std::memory_order_release);
-#ifdef _TRACE_STATS_
+  #ifdef _TRACE_STATS_
         ++p.stats().cas_num;
-#endif
+  #endif
+        /// new_idx = producer_idx_.fetch_add(1, std::memory_order_release);
       } while (!producer_idx_.compare_exchange_strong(old_idx, new_idx, std::memory_order_acq_rel,
                                                       std::memory_order_acquire));
       return new_idx;
+#else
+      return producer_idx_.fetch_add(1u, std::memory_order_acq_rel);
+#endif
     }
 
     template <class Producer>
     size_t aquire_first_idx(Producer& p) requires(_MAX_PRODUCER_N_ == 1)
     {
+      // we use CAS here just in case producer has detached in one thread, but than shortly attached in another!
+
+#ifdef _TRACE_PRODUCER_IDX_
       size_t new_idx;
       size_t old_idx = producer_idx_.load(std::memory_order_acquire);
       do
       {
         new_idx = 1 + old_idx;
-        host_.producer_ctx_.producer_progress_[p.producer_id_].idx.store(new_idx, std::memory_order_release);
       } while (!producer_idx_.compare_exchange_strong(old_idx, new_idx, std::memory_order_release,
                                                       std::memory_order_acquire));
       return new_idx;
+#else
+      size_t new_idx;
+      size_t old_idx = producer_idx_.load(std::memory_order_acquire);
+      do
+      {
+        new_idx = old_idx + 1;
+      } while (!producer_idx_.compare_exchange_strong(old_idx, new_idx, std::memory_order_acq_rel,
+                                                      std::memory_order_acquire));
+      return old_idx;
+
+#endif
     }
 
     template <class Producer>
@@ -146,22 +232,13 @@ class SPMCMulticastQueueReliableBounded
   };
 
   ProducerContext producer_ctx_;
+  ConsumerContext consumer_ctx_;
 
-  using ConsumerProgressArray = std::array<ConsumerProgress, _MAX_CONSUMER_N_>;
-  using ConsumerRegistryArray = std::array<std::atomic<bool>, _MAX_CONSUMER_N_>;
-
-  alignas(64) ConsumerProgressArray consumers_progress_;
-  alignas(64) ConsumerRegistryArray consumers_registry_;
-
-  // these variables change somewhat infrequently
-  alignas(64) std::atomic<int> consumers_pending_attach_;
   std::atomic<size_t> next_max_consumer_id_;
   std::atomic<size_t> next_max_producer_id_;
 
 public:
   using version_type = VersionType;
-  using Base =
-    SPMCMulticastQueueBase<T, SPMCMulticastQueueReliableBounded, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator, VersionType>;
   using NodeAllocTraits = typename Base::NodeAllocTraits;
   using Node = typename Base::Node;
   using ConsumerTicket = typename Base::ConsumerTicket;
@@ -175,21 +252,25 @@ public:
   using Base::stop;
 
   SPMCMulticastQueueReliableBounded(std::size_t N, const Allocator& alloc = Allocator())
-    : Base(N, alloc),
-      producer_ctx_(*this),
-      consumers_pending_attach_(0),
-      next_max_consumer_id_(0),
-      next_max_producer_id_(0)
+    : Base(N, alloc), producer_ctx_(*this), consumer_ctx_(*this), next_max_consumer_id_(0), next_max_producer_id_(0)
   {
-    for (auto it = std::begin(consumers_progress_); it != std::end(consumers_progress_); ++it)
-      it->idx.store(CONSUMER_IS_WELCOME, std::memory_order_release);
-
-    std::fill(std::begin(consumers_registry_), std::end(consumers_registry_), 0 /*unlocked*/);
   }
 
   size_t get_producer_idx() const
   {
     return producer_ctx_.producer_idx_.load(std::memory_order_relaxed);
+  }
+
+  // WARNING: shall it be relaxed really?
+  size_t get_consumer_next_idx() const
+  {
+    return consumer_ctx_.consumer_idx_.load(std::memory_order_relaxed);
+  }
+
+  template <class Consumer>
+  size_t acquire_consumer_idx(Consumer& c)
+  {
+    return consumer_ctx_.acquire_idx(c);
   }
 
   template <class Producer>
@@ -209,7 +290,7 @@ public:
   {
     for (size_t i = 0; i < _MAX_CONSUMER_N_; ++i)
     {
-      std::atomic<bool>& locker = this->consumers_registry_.at(i);
+      std::atomic<bool>& locker = this->consumer_ctx_.consumers_registry_.at(i);
       bool is_locked = locker.load(std::memory_order_acquire);
       if (!is_locked)
       {
@@ -223,16 +304,28 @@ public:
             if (!is_running())
             {
               // if the queue has not started, then let's assign the next read idx by ourselves!
-              this->consumers_progress_.at(i).idx.store(0, std::memory_order_release);
-              this->consumers_progress_.at(i).previous_version.store(version_type{}, std::memory_order_release);
+              if constexpr (_synchronized_consumer_)
+              {
+                this->consumer_ctx_.consumers_progress_.at(i).previous_version.store(
+                  version_type{}, std::memory_order_release);
+                this->consumer_ctx_.consumers_progress_.at(i).idx.store(NEXT_CONSUMER_IDX_NEEDED,
+                                                                        std::memory_order_release);
+              }
+              else
+              {
+                this->consumer_ctx_.consumers_progress_.at(i).idx.store(0, std::memory_order_release);
+                this->consumer_ctx_.consumers_progress_.at(i).previous_version.store(
+                  version_type{}, std::memory_order_release);
+              }
               producer_need_to_accept = false;
             }
           }
 
           if (producer_need_to_accept)
           {
-            this->consumers_progress_.at(i).idx.store(CONSUMER_JOIN_REQUESTED, std::memory_order_release);
-            this->consumers_pending_attach_.fetch_add(1, std::memory_order_release);
+            this->consumer_ctx_.consumers_progress_.at(i).idx.store(CONSUMER_JOIN_REQUESTED,
+                                                                    std::memory_order_release);
+            this->consumer_ctx_.consumers_pending_attach_.fetch_add(1, std::memory_order_release);
           }
 
           {
@@ -249,8 +342,10 @@ public:
           do
           {
             stopped = is_stopped();
-            consumer_next_idx = this->consumers_progress_.at(i).idx.load(std::memory_order_acquire);
-            previous_version = this->consumers_progress_.at(i).previous_version.load(std::memory_order_relaxed);
+            consumer_next_idx =
+              this->consumer_ctx_.consumers_progress_.at(i).idx.load(std::memory_order_acquire);
+            previous_version =
+              this->consumer_ctx_.consumers_progress_.at(i).previous_version.load(std::memory_order_relaxed);
           } while (!stopped && consumer_next_idx >= CONSUMER_JOIN_INPROGRESS);
 
           if (stopped)
@@ -276,17 +371,17 @@ public:
 
   bool detach_consumer(size_t consumer_id)
   {
-    std::atomic<bool>& locker = this->consumers_registry_.at(consumer_id);
+    std::atomic<bool>& locker = this->consumer_ctx_.consumers_registry_.at(consumer_id);
     bool is_locked = locker.load(std::memory_order_acquire);
     if (is_locked)
     {
-      this->consumers_progress_.at(consumer_id).idx.store(CONSUMER_IS_WELCOME, std::memory_order_release);
+      this->consumer_ctx_.consumers_progress_.at(consumer_id).idx.store(CONSUMER_IS_WELCOME, std::memory_order_release);
       if (locker.compare_exchange_strong(is_locked, false, std::memory_order_release, std::memory_order_relaxed))
       {
         // this->consumers_pending_dettach_.fetch_add(1, std::memory_order_release);
         //  technically even possible that while we unregistered it another
         //  thread, another consumer stole our slot legitimately and we just
-        //  removed it from the registery, effectively leaking it...
+        //  removed it from the registry, effectively leaking it...
         //  so unlocked the same consumer on multiple threads is really a bad
         //  idea
 
@@ -295,7 +390,8 @@ public:
         auto new_max_consumer_id = _MAX_CONSUMER_N_ - 1;
         do
         {
-          if (this->consumers_progress_.at(new_max_consumer_id).idx.load(std::memory_order_relaxed) == CONSUMER_IS_WELCOME)
+          if (this->consumer_ctx_.consumers_progress_.at(new_max_consumer_id).idx.load(std::memory_order_relaxed) ==
+              CONSUMER_IS_WELCOME)
             --new_max_consumer_id;
           else
           {
@@ -320,19 +416,31 @@ public:
 
   size_t try_accept_new_consumer(size_t i, size_t consumer_from_idx)
   {
-    size_t consumer_next_idx = this->consumers_progress_[i].idx.load(std::memory_order_acquire);
+    size_t consumer_next_idx = this->consumer_ctx_.consumers_progress_[i].idx.load(std::memory_order_acquire);
     if (CONSUMER_JOIN_REQUESTED == consumer_next_idx)
     {
       // new consumer wants a ticket!
-      if (this->consumers_progress_[i].idx.compare_exchange_strong(
+      if (this->consumer_ctx_.consumers_progress_[i].idx.compare_exchange_strong(
             consumer_next_idx, CONSUMER_JOIN_INPROGRESS, std::memory_order_acquire, std::memory_order_relaxed))
       {
-        consumer_next_idx = consumer_from_idx;
-        size_t queue_version = consumer_next_idx / this->size();
-        auto previous_version = (queue_version & 1) ? version_type{1u} : version_type{};
-        this->consumers_progress_[i].previous_version.store(previous_version, std::memory_order_release);
-        this->consumers_progress_[i].idx.store(consumer_next_idx, std::memory_order_release);
-        this->consumers_pending_attach_.fetch_sub(1, std::memory_order_release);
+        if constexpr (_synchronized_consumer_)
+        {
+          // synchronized consumers must acquire their first idx in the producer so
+          // that consumer_progress can be updated by producer as well!
+          size_t idx = consumer_ctx_.acquire_first_idx(i);
+          consumer_ctx_.consumers_progress_[i].idx.store(idx, std::memory_order_release);
+        }
+        else
+        {
+          consumer_next_idx = consumer_from_idx;
+          size_t queue_version = consumer_next_idx / this->size();
+          auto previous_version = (queue_version & 1) ? version_type{1u} : version_type{};
+          this->consumer_ctx_.consumers_progress_[i].previous_version.store(
+            previous_version, std::memory_order_release);
+          this->consumer_ctx_.consumers_progress_[i].idx.store(consumer_next_idx, std::memory_order_release);
+        }
+
+        this->consumer_ctx_.consumers_pending_attach_.fetch_sub(1, std::memory_order_release);
       }
     }
     return consumer_next_idx;
@@ -379,18 +487,21 @@ public:
     bool is_locked = locker.load(std::memory_order_acquire);
     if (is_locked)
     {
+#ifdef _TRACE_PRODUCER_IDX_
       this->producer_ctx_.producer_progress_.at(producer_id).idx.store(PRODUCER_IS_WELCOME, std::memory_order_release);
+#endif
       if (locker.compare_exchange_strong(is_locked, false, std::memory_order_release, std::memory_order_relaxed))
       {
         // this->consumers_pending_dettach_.fetch_add(1, std::memory_order_release);
         //  technically even possible that while we unregistered it another
         //  thread, another consumer stole our slot legitimately and we just
-        //  removed it from the registery, effectively leaking it...
+        //  removed it from the registry, effectively leaking it...
         //  so unlocked the same consumer on multiple threads is really a bad
         //  idea
 
         Spinlock::scoped_lock autolock(this->slow_path_guard_);
         // It shall be safe to update max consumer idx as the attach function would restore max consumer idx shall one appear right after.
+#ifdef _TRACE_PRODUCER_IDX_
         auto new_max_producer_id = _MAX_PRODUCER_N_ - 1;
         while (new_max_producer_id >= 0 && new_max_producer_id != std::numeric_limits<size_t>::max())
         {
@@ -404,6 +515,7 @@ public:
         }
 
         this->next_max_producer_id_.store(new_max_producer_id + 1, std::memory_order_release);
+#endif
         return true;
       }
       else
@@ -418,8 +530,10 @@ public:
   }
 
   template <class Producer>
-  void try_update_producer_progress(size_t original_idx, Producer& p) requires(_MAX_PRODUCER_N_ > 1)
+  void unlock_min_producer_idx(size_t original_idx, Producer& p) requires(_MAX_PRODUCER_N_ > 1)
   {
+    // this is required for producer to commit its min producer idx so that each producer can push items at
+    // its own pace! the point to set idx to PRODUCER_JOINED is to not participate in calculating min producer idx!
     this->producer_ctx_.producer_progress_[p.producer_id_].idx.store(PRODUCER_JOINED, std::memory_order_release);
   }
 
@@ -431,32 +545,69 @@ public:
       return ProduceReturnCode::NotRunning;
     }
 
-    size_t min_next_consumer_idx = producer_ctx_.get_min_next_consumer_idx_cached();
-    bool no_active_consumers = min_next_consumer_idx == CONSUMER_IS_WELCOME;
+    size_t min_next_consumer_idx = producer.get_min_next_consumer_idx_cached();
+    bool no_active_consumers =
+      min_next_consumer_idx == CONSUMER_IS_WELCOME; // TODO: fix for synchronized consumers!
 
-    size_t min_next_producer_idx;
+#ifdef _TRACE_PRODUCER_IDX_
     bool slow_producer;
+    size_t min_next_producer_idx = producer.get_min_next_producer_idx_cached();
+#endif
+
     bool no_free_slot;
     bool slow_consumer =
       min_next_consumer_idx > original_idx || (original_idx - min_next_consumer_idx >= this->n_);
+#ifdef _TRACE_PRODUCER_IDX_
     if constexpr (_MAX_PRODUCER_N_ > 1)
     {
-      min_next_producer_idx = producer_ctx_.get_min_next_producer_idx_cached();
       bool no_active_producers = min_next_producer_idx == PRODUCER_IS_WELCOME;
       slow_producer =
-        min_next_producer_idx > original_idx || (original_idx - min_next_producer_idx >= this->n_);
-      no_free_slot = no_active_consumers || no_active_producers || slow_consumer || slow_producer;
+        min_next_producer_idx > original_idx || original_idx - min_next_producer_idx >= this->n_;
+      no_free_slot = no_active_consumers || slow_consumer || no_active_producers || slow_producer;
     }
     else
+#endif
     {
       no_free_slot = no_active_consumers || slow_consumer;
     }
 
-    while (no_free_slot || this->consumers_pending_attach_.load(std::memory_order_acquire))
+    while (no_free_slot || this->consumer_ctx_.consumers_pending_attach_.load(std::memory_order_acquire))
     {
+      if (!is_running())
+      {
+        return ProduceReturnCode::NotRunning;
+      }
+
       size_t min_next_producer_idx_local = original_idx;
+      size_t min_next_consumer_idx_local = consumer_ctx_.get_next_idx();
+      auto next_max_consumer_id = this->next_max_consumer_id_.load(std::memory_order_acquire);
+      for (size_t i = 0; i < next_max_consumer_id; ++i)
+      {
+        // when new consumer joins it is important to pass it producer idx for which all the smaller indicies are fully published
+        // and visible to other cores too, otherwise consumers may  just wrap around the array and consume non-finished item!
+        // Array Size=3, versions [0, 1, 1], If consumers were to join at index 1, it would consume index 1, index 2, then
+        // warp to consume index 0 again and if the other publisher were still not complete publishing, it would just consume index 0,
+        // because after consuming index 2 it would change next expected version to 0!
+        size_t consumer_next_idx = try_accept_new_consumer(i, min_next_producer_idx_local); // TODO: fix !
+        if (consumer_next_idx < NEXT_CONSUMER_IDX_NEEDED)
+        {
+          min_next_consumer_idx_local = std::min(min_next_consumer_idx_local, consumer_next_idx);
+        }
+      }
+
+      producer.cache_min_next_consumer_idx(min_next_consumer_idx_local);
+      // no active consumer check is a great safety guard to prevent producers keep overriding nodes
+      // and racing with each other as it facilitates transitive happens
+      // before relationship between multiple  producers as well!
+      no_active_consumers = min_next_consumer_idx_local ==
+        CONSUMER_IS_WELCOME; // TODO: fix this for synchronized consumers!
+      slow_consumer = original_idx - min_next_consumer_idx_local >= this->n_;
+
+#ifdef _TRACE_PRODUCER_IDX_
       if constexpr (_MAX_PRODUCER_N_ > 1)
       {
+        // need to track min producer idx so that we must ensure that the current
+        // producer thread has synchronized with previous producer on the same node
         auto next_max_producer_id = this->next_max_producer_id_.load(std::memory_order_acquire);
         for (size_t i = 0; i < next_max_producer_id; ++i)
         {
@@ -470,31 +621,41 @@ public:
         assert(min_next_producer_idx_local != PRODUCER_IS_WELCOME);
       }
 
-      size_t min_next_consumer_idx_local = CONSUMER_IS_WELCOME;
-      auto next_max_consumer_id = this->next_max_consumer_id_.load(std::memory_order_acquire);
-      for (size_t i = 0; i < next_max_consumer_id; ++i)
-      {
-        size_t consumer_next_idx = try_accept_new_consumer(i, min_next_producer_idx_local);
-        if (consumer_next_idx < CONSUMER_JOIN_INPROGRESS)
-        {
-          min_next_consumer_idx_local = std::min(min_next_consumer_idx_local, consumer_next_idx);
-        }
-      }
-
-      producer_ctx_.cache_min_next_consumer_idx(min_next_consumer_idx_local);
-      no_active_consumers = min_next_consumer_idx_local == CONSUMER_IS_WELCOME;
-      slow_consumer = original_idx - min_next_consumer_idx_local >= this->n_;
-
       if constexpr (_MAX_PRODUCER_N_ > 1)
       {
-        producer_ctx_.cache_min_next_producer_idx(min_next_producer_idx_local);
+        producer.cache_min_next_producer_idx(min_next_producer_idx_local);
+        // producer idx tracking was necessary in order to make sure producers won't override
+        // each other since if you use bit re-use logic than there are two publishing events!
         slow_producer = original_idx - min_next_producer_idx_local >= this->n_;
-        no_free_slot = (no_active_consumers || slow_consumer || slow_producer);
+        if (slow_producer)
+        {
+          if constexpr (blocking)
+          {
+            if (!no_active_consumers && !slow_consumer)
+            {
+              // technically it shall never happen (at least to break the logic)  "happens before" relationship is transitive. Before Producer1 publishes an item
+              // it would set its Idx in the producer_progress_ array. That Idx won't get cleared until Producer1 fully finishes pushing
+              // an item and before Producer1 releases "version" publishing. Consumer1 would look at "version" change and would only consume
+              // an item if it has changed! There is a clear "happens-before" relanships between Producer1 and Consumer1, but also once Consumer1
+              // finishes consuming a batch of items it would publish its next consume-to idx with Release memory order. Now, if Producer2 reads
+              // consume-to idx for all the consumers and if it would read one from Consume1, there would be "happens-before" relationship
+              // between Consumer 1 and Producer 2, which would create a transitive happens before between Producer1 and Producer2
+              // since in Consumer1 reading version change is *sequence before* committing its next consume-to index.
+              // That transitive relationship between Producer1 and Producer2 would ensure producer_progress index that Producer2 reads from
+              // Producer1 would read producer_progress index "at least" as Consumer1 progress index - ***it may read later values too,
+              // but not earlier ones***! NOTE IT CAN BE FALSE POSITIVE AS WELL IF PRODUCER INDICATED PROGRESS IDX BUT COULD NOT LOCK THE IDX!
+            }
+          }
+          else
+          {
+            // we must also lock at min_producer_idx since after all this producer has not published
+            // anything return ProduceReturnCode::SlowPublisher;
+          }
+        }
       }
-      else
-      {
-        no_free_slot = (no_active_consumers || slow_consumer);
-      }
+#endif
+
+      no_free_slot = (no_active_consumers || slow_consumer);
 
       if (no_active_consumers)
       {
@@ -503,15 +664,12 @@ public:
 
       assert(original_idx >= min_next_consumer_idx_local);
 
+#ifdef _TRACE_PRODUCER_IDX_
       if constexpr (_MAX_PRODUCER_N_ > 1)
       {
         assert(original_idx >= min_next_producer_idx_local);
       }
-
-      if (!is_running())
-      {
-        return ProduceReturnCode::NotRunning;
-      }
+#endif
 
       if constexpr (!blocking)
       {
@@ -519,19 +677,44 @@ public:
         {
           return ProduceReturnCode::SlowConsumer;
         }
-
-        if constexpr (_MAX_PRODUCER_N_ > 1)
-        {
-          if (slow_producer)
-          {
-            return ProduceReturnCode::SlowPublisher;
-          }
-        }
       }
     }
 
     size_t idx = original_idx & this->idx_mask_;
     Node& node = this->nodes_[idx];
+    version_type version;
+    {
+
+      if constexpr (_synchronized_consumer_)
+      {
+
+        if constexpr (_MAX_PRODUCER_N_ > 1)
+        {
+          // cannot estimate properly version as consumer can join / detach dynamically...
+          version = original_idx / this->size();
+        }
+        else
+        {
+          version = node.version_.load(std::memory_order_acquire);
+        }
+      }
+      else if constexpr (_MAX_PRODUCER_N_ > 1)
+      {
+        version = ((original_idx / this->size()) & 1u) ? version_type{1u} : version_type{0};
+      }
+      else
+      {
+        if constexpr (_reuse_single_bit_from_object_)
+        {
+          const T& obj = reinterpret_cast<const T&>(node.storage_);
+          version = obj.read_version();
+        }
+        else
+        {
+          version = node.version_.load(std::memory_order_acquire);
+        }
+      }
+    }
 
     void* storage = node.storage_;
     if constexpr (!std::is_trivially_destructible_v<T>)
@@ -542,57 +725,48 @@ public:
       }
     }
 
-    version_type version;
-    if constexpr (_MAX_PRODUCER_N_ > 1)
-    {
-      version = ((original_idx / this->size()) & 1u) ? version_type{1u} : version_type{0};
-    }
-    else
-    {
-      if constexpr (msb_always_0<T>)
-      {
-        const T& obj = reinterpret_cast<T&>(node.storage_);
-        version = obj.read_version();
-      }
-      else
-      {
-        version = node.version_.load(std::memory_order_relaxed);
-      }
-    }
-
-    NodeAllocTraits::construct(this->alloc_, static_cast<T*>(storage), std::forward<Args>(args)...);
-
-    if constexpr (msb_always_0<T>)
+    if constexpr (_reuse_single_bit_from_object_)
     {
       T& obj = reinterpret_cast<T&>(node.storage_);
       // newly constructed object must already have set re-used bit to 0!
-      if (0 == version)
-      {
-        obj.flip_version();
-      }
-      else
-      {
-        obj.release_version();
-      }
+      obj.store(std::forward<Args>(args)...);
+    }
+    else if constexpr (_synchronized_consumer_)
+    {
+      NodeAllocTraits::construct(this->alloc_, static_cast<T*>(storage), std::forward<Args>(args)...);
+      node.version_.store(1 + version, std::memory_order_release);
     }
     else
     {
+      NodeAllocTraits::construct(this->alloc_, static_cast<T*>(storage), std::forward<Args>(args)...);
       node.version_.store(version ^ version_type{1u}, std::memory_order_release);
     }
 
+#ifdef _TRACE_PRODUCER_IDX_
     if constexpr (_MAX_PRODUCER_N_ > 1)
     {
-      try_update_producer_progress(original_idx, producer);
+      unlock_min_producer_idx(original_idx, producer);
     }
+#endif
+
 #ifdef _TRACE_STATS_
     ++producer.stats().pub_num;
 #endif
+
     return ProduceReturnCode::Published;
   }
 
-  template <class C, class F>
-  ConsumeReturnCode consume_by_func(size_t idx, size_t& queue_idx, Node& node, auto version, C& consumer, F&& f)
+  version_type calc_version(size_t original_idx)
   {
+    size_t lap_num = original_idx / this->size();
+    return (lap_num & 1u) ? version_type{1u} : version_type{};
+  }
+
+  template <class C, class F>
+  ConsumeReturnCode consume_by_func(size_t idx, size_t& queue_idx, Node& node, auto version,
+                                    C& consumer, F&& f) requires(!_synchronized_consumer_)
+  {
+
     if (consumer.previous_version_ ^ version)
     {
       std::forward<F>(f)(node.storage_);
@@ -605,8 +779,8 @@ public:
       ++consumer.consumer_next_idx_;
       if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
       {
-        this->consumers_progress_[consumer.consumer_id_].idx.store(consumer.consumer_next_idx_,
-                                                                   std::memory_order_release);
+        this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
+          consumer.consumer_next_idx_, std::memory_order_release);
         consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
       }
 
@@ -618,8 +792,27 @@ public:
     }
   }
 
+  template <class C, class F>
+  ConsumeReturnCode consume_by_func(size_t idx, size_t& queue_idx, Node& node, auto version,
+                                    C& consumer, F&& f) requires(_synchronized_consumer_)
+  {
+    size_t expected_version = 1 + (idx / this->capacity());
+    if (expected_version == version)
+    {
+      std::forward<F>(f)(node.storage_);
+      this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
+        NEXT_CONSUMER_IDX_NEEDED, std::memory_order_release);
+      consumer.consumer_next_idx_ = NEXT_CONSUMER_IDX_NEEDED;
+      return ConsumeReturnCode::Consumed;
+    }
+    else
+    {
+      return ConsumeReturnCode::NothingToConsume;
+    }
+  }
+
   template <class C>
-  const T* peek(Node& node, auto version, C& consumer) const
+  const T* peek(Node& node, auto version, C& consumer) const requires(!_synchronized_consumer_)
   {
     if (consumer.previous_version_ ^ version)
     {
@@ -632,7 +825,8 @@ public:
   }
 
   template <class C>
-  ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node, version_type version, C& consumer)
+  ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node, version_type version,
+                         C& consumer) requires(!_synchronized_consumer_)
   {
     if (consumer.previous_version_ ^ version)
     {
@@ -644,10 +838,28 @@ public:
       ++consumer.consumer_next_idx_;
       if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
       {
-        this->consumers_progress_[consumer.consumer_id_].idx.store(consumer.consumer_next_idx_,
-                                                                   std::memory_order_release);
+        this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
+          consumer.consumer_next_idx_, std::memory_order_release);
         consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
       }
+      return ConsumeReturnCode::Consumed;
+    }
+    else
+    {
+      return ConsumeReturnCode::NothingToConsume;
+    }
+  }
+
+  template <class C>
+  ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node, version_type version,
+                         C& consumer) requires(_synchronized_consumer_)
+  {
+    size_t expected_version = 1 + (idx / this->capacity());
+    if (expected_version == version)
+    {
+      this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
+        NEXT_CONSUMER_IDX_NEEDED, std::memory_order_release);
+      consumer.consumer_next_idx_ = NEXT_CONSUMER_IDX_NEEDED;
       return ConsumeReturnCode::Consumed;
     }
     else

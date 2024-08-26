@@ -17,9 +17,13 @@
 #pragma once
 
 #include "common.h"
+#include "detail/single_bit_reuse.h"
 #include <atomic>
+#include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <memory>
+#include <unordered_set>
 
 template <class Queue, class Derived>
 class ProducerBase
@@ -29,8 +33,13 @@ protected:
   friend Queue;
 
   size_t last_producer_idx_{PRODUCER_IS_WELCOME};
+  size_t min_next_consumer_idx_{CONSUMER_IS_WELCOME};
+  size_t producer_id_{std::numeric_limits<size_t>::max()};
   size_t items_per_batch_;
-  size_t producer_id_{0};
+
+#ifdef _TRACE_PRODUCER_IDX_
+  size_t min_next_producer_idx_{PRODUCER_IS_WELCOME};
+#endif
 
 #ifdef _TRACE_STATS_
   struct Stats
@@ -48,6 +57,8 @@ public:
   const Stats& stats() const { return stats_; }
 #endif
 
+  using type = typename Queue::type;
+
   ProducerBase() = default;
   ProducerBase(Queue& q)
   {
@@ -59,6 +70,14 @@ public:
     }
   }
   ~ProducerBase() { detach(); }
+
+  size_t get_min_next_consumer_idx_cached() { return min_next_consumer_idx_; }
+  void cache_min_next_consumer_idx(size_t idx) { min_next_consumer_idx_ = idx; }
+
+#ifdef _TRACE_PRODUCER_IDX_
+  void cache_min_next_producer_idx(size_t idx) { min_next_producer_idx_ = idx; }
+  size_t get_min_next_producer_idx_cached() const { return min_next_producer_idx_; }
+#endif
 
   ProducerAttachReturnCode attach(Queue& q)
   {
@@ -94,6 +113,36 @@ public:
     return false;
   }
 
+  /* this functions inserts publisher idx, and it is really meant to be used for debugging*/
+  template <class... Args>
+  ProduceReturnCode emplace_idx() requires std::same_as<size_t, type> || std::same_as<integral_msb_always_0<size_t>, type>
+  {
+    if (PRODUCER_JOIN_INPROGRESS == this->last_producer_idx_)
+    {
+      this->last_producer_idx_ = this->q_->aquire_first_idx(static_cast<Derived&>(*this));
+    }
+    else if (NEXT_PRODUCER_IDX_NEEDED == this->last_producer_idx_)
+    {
+      this->last_producer_idx_ = this->q_->aquire_idx(static_cast<Derived&>(*this));
+    }
+
+    uint32_t producer_idx = producer_id_;
+    uint32_t original_idx = (uint32_t)this->last_producer_idx_;
+    size_t val;
+    {
+      memcpy(&val, &original_idx, 4);
+      memcpy(((char*)&val) + 4, &producer_idx, 4);
+    }
+
+    auto r = this->q_->emplace(this->last_producer_idx_, *static_cast<Derived*>(this), val);
+    if (ProduceReturnCode::Published == r)
+    {
+      this->last_producer_idx_ = NEXT_PRODUCER_IDX_NEEDED;
+    }
+
+    return r;
+  }
+
   template <class... Args>
   ProduceReturnCode emplace(Args&&... args)
   {
@@ -108,7 +157,7 @@ public:
 
     auto r = this->q_->emplace(this->last_producer_idx_, *static_cast<Derived*>(this),
                                std::forward<Args>(args)...);
-    if (ProduceReturnCode::Published == r || ProduceReturnCode::SlowPublisher == r)
+    if (ProduceReturnCode::Published == r)
     {
       this->last_producer_idx_ = NEXT_PRODUCER_IDX_NEEDED;
     }

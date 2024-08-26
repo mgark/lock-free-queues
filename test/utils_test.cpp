@@ -63,4 +63,5 @@ TEST_CASE("Single 1 bit bit masks test - int")
   CHECK(int_masks[31] == 0b00000000000000000000000000000001);
 }
 
+static_assert(std::atomic<integral_msb_always_0<size_t>>::is_always_lock_free);
 int main(int argc, char** argv) { return Catch::Session().run(argc, argv); }

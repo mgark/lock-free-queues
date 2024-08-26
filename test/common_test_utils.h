@@ -69,6 +69,8 @@ public:
     std::cout << v;
     return *this;
   }
+
+  void flush() { std::cout << std::endl; }
 };
 
 #define TLOG ConsoleLogger()

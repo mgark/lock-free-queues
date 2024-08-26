@@ -43,7 +43,6 @@ protected:
   size_t next_checkout_point_idx_;
   size_t items_per_batch_;
   mutable size_t queue_idx_;
-  std::atomic_bool slow_consumer_; // TODO: not implemented fully yet
 
   friend Queue;
   friend typename Queue::Base;
@@ -51,8 +50,8 @@ protected:
 public:
   using T = typename Queue::type;
 
-  ConsumerBase() : q_(nullptr), slow_consumer_(false) {}
-  ConsumerBase(Queue& q) : q_(nullptr), slow_consumer_(false)
+  ConsumerBase() : q_(nullptr) {}
+  ConsumerBase(Queue& q) : q_(nullptr)
   {
     if (ConsumerAttachReturnCode::Attached != attach(q))
     {
@@ -83,8 +82,6 @@ public:
       return false;
   }
 
-  void set_slow_consumer() noexcept { slow_consumer_.store(true, std::memory_order_release); }
-  bool is_slow_consumer() const noexcept { return slow_consumer_.load(std::memory_order_acquire); }
   bool is_stopped() const noexcept { return this->q_->is_stopped(); }
 
   bool empty() const { return this->q_->empty(this->queue_idx_, *this); }
@@ -120,6 +117,7 @@ protected:
       consumer_next_idx_ = ticket.consumer_next_idx;
       items_per_batch_ = ticket.items_per_batch;
       queue_idx_ = ticket.queue_idx;
+      previous_version_ = ticket.previous_version; // it will be properly recalculated later on by consumers!
 
       if (std::numeric_limits<size_t>::max() != ticket.items_per_batch)
       {
@@ -127,8 +125,6 @@ protected:
         next_checkout_point_idx_ = ticket.items_per_batch +
           (consumer_next_idx_ - ticket.consumer_next_idx % ticket.items_per_batch);
       }
-
-      previous_version_ = ticket.previous_version; // it will be properly recalculated later on by consumers!
     }
 
     return ticket.ret_code;
@@ -265,13 +261,27 @@ struct ConsumerBlocking : ConsumerBase<Queue>
     const_consumer_iterator<ConsumerBlocking<Queue>>; // htypename ConsumerBase<Queue>::template const_iterator<ConsumerBlocking<Queue>>;
   static constexpr bool blocking_v = true;
 
-  const_iterator cbegin() requires std::input_iterator<const_iterator>
+  const_iterator cbegin() requires requires
+  {
+    requires !Queue::_synchronized_consumer_;
+    requires std::input_iterator<const_iterator>;
+  }
   {
     return const_iterator(this);
   }
-  const_iterator cend() requires std::input_iterator<const_iterator> { return const_iterator(); }
+  const_iterator cend() requires requires
+  {
+    requires !Queue::_synchronized_consumer_;
+    requires std::input_iterator<const_iterator>;
+  }
+  {
+    return const_iterator();
+  }
 
-  const T* peek() const { return this->q_->peek_blocking(this->queue_idx_, *this); }
+  const T* peek() const requires(!Queue::_synchronized_consumer_)
+  {
+    return this->q_->peek_blocking(this->queue_idx_, *this);
+  }
 
   template <class F>
   ConsumeReturnCode consume(F&& f) requires(std::is_void_v<decltype((std::forward<F>(f)(std::declval<T>()), void()))>)
@@ -322,13 +332,32 @@ struct ConsumerNonBlocking : ConsumerBase<Queue>
   using const_iterator =
     const_consumer_iterator<ConsumerNonBlocking<Queue>>; // typename ConsumerBase<Queue>::template const_iterator<ConsumerNonBlocking<Queue>>;
 
-  const_iterator cbegin() requires std::input_iterator<const_iterator>
+  const_iterator cbegin() requires requires
+  {
+    requires(!Queue::_synchronized_consumer_);
+    requires std::input_iterator<const_iterator>;
+  }
   {
     return const_iterator(this);
   }
-  const_iterator cend() requires std::input_iterator<const_iterator> { return const_iterator(); }
 
-  const T* peek() const { return this->q_->peek_non_blocking(this->queue_idx_, *this); }
+  const_iterator cend() requires requires
+  {
+    requires(!Queue::_synchronized_consumer_);
+    requires std::input_iterator<const_iterator>;
+  }
+  {
+    return const_iterator();
+  }
+
+  /*
+  TODO: technically it is possible to consider peeking elements from synchronized consumers,
+  but it may be costly and the main question which element shall we peek(last published, next consumed?)
+  */
+  const T* peek() const requires(!Queue::_synchronized_consumer_)
+  {
+    return this->q_->peek_non_blocking(this->queue_idx_, *this);
+  }
 
   template <class F>
   ConsumeReturnCode consume(F&& f) requires(std::is_void_v<decltype((std::forward<F>(f)(std::declval<T>()), void()))>)

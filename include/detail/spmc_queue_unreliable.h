@@ -31,37 +31,48 @@ template <class T, size_t _MAX_CONSUMER_N_ = 8, size_t _MAX_PRODUCER_N_ = 1, siz
           class Allocator = std::allocator<T>, class VersionType = size_t>
 class SPMCMulticastQueueUnreliable
   : public SPMCMulticastQueueBase<T, SPMCMulticastQueueUnreliable<T, _MAX_CONSUMER_N_, _MAX_PRODUCER_N_, _BATCH_NUM_, Allocator>,
-                                  _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator, VersionType>
+                                  _MAX_CONSUMER_N_, _BATCH_NUM_, true, Allocator, VersionType>
 {
+public:
+  using Base =
+    SPMCMulticastQueueBase<T, SPMCMulticastQueueUnreliable, _MAX_CONSUMER_N_, _BATCH_NUM_, true, Allocator, VersionType>;
+  using Base::_synchronized_consumer_;
+
+private:
   static_assert(std::is_trivially_copyable_v<T>);
+
+  struct ConsumerContext
+  {
+    template <class Consumer>
+    size_t acquire_idx(Consumer& c) requires(!_synchronized_consumer_)
+    {
+      return c.consumer_next_idx_;
+    }
+
+    size_t get_next_idx() const requires(!_synchronized_consumer_) { return CONSUMER_IS_WELCOME; }
+  };
 
   struct ProducerContext
   {
-    alignas(64) std::atomic<size_t> producer_idx_{std::numeric_limits<size_t>::max()};
+    alignas(64) std::atomic<size_t> producer_idx_;
+
+    ProducerContext() { producer_idx_.store(0, std::memory_order_release); }
 
     template <class Producer>
     size_t aquire_idx(Producer& p) requires(_MAX_PRODUCER_N_ == 1)
     {
-      size_t new_idx = 1 + producer_idx_.load(std::memory_order_acquire);
-      producer_idx_.store(new_idx, std::memory_order_release);
+      // for single producer relaxed ordering should be enough since this would be
+      // called after first successful publishing already done by this producer which
+      // would establish the right ordering with previous producer
+      size_t new_idx = producer_idx_.load(std::memory_order_relaxed);
+      producer_idx_.store(new_idx + 1, std::memory_order_relaxed);
       return new_idx;
     }
 
     template <class Producer>
     size_t aquire_idx(Producer& p) requires(_MAX_PRODUCER_N_ > 1)
     {
-      size_t old_idx;
-      size_t new_idx;
-      do
-      {
-        old_idx = producer_idx_.load(std::memory_order_acquire);
-        new_idx = old_idx + 1;
-  #ifdef _TRACE_STATS_
-        ++p.stats().cas_num;
-  #endif
-      } while (!producer_idx_.compare_exchange_strong(old_idx, new_idx, std::memory_order_acq_rel,
-                                                      std::memory_order_acquire));
-      return new_idx;
+      return producer_idx_.fetch_add(1u, std::memory_order_acq_rel);
     }
 
     template <class Producer>
@@ -71,10 +82,10 @@ class SPMCMulticastQueueUnreliable
       size_t old_idx = producer_idx_.load(std::memory_order_acquire);
       do
       {
-        new_idx = 1 + old_idx;
-      } while (!producer_idx_.compare_exchange_strong(old_idx, new_idx, std::memory_order_release,
+        new_idx = old_idx + 1;
+      } while (!producer_idx_.compare_exchange_strong(old_idx, new_idx, std::memory_order_acq_rel,
                                                       std::memory_order_acquire));
-      return new_idx;
+      return old_idx;
     }
 
     template <class Producer>
@@ -85,11 +96,10 @@ class SPMCMulticastQueueUnreliable
   };
 
   ProducerContext producer_ctx_;
+  ConsumerContext consumer_ctx_;
 
 public:
   using version_type = VersionType;
-  using Base =
-    SPMCMulticastQueueBase<T, SPMCMulticastQueueUnreliable, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator, VersionType>;
   using NodeAllocTraits = typename Base::NodeAllocTraits;
   using Node = typename Base::Node;
   using ProducerTicket = typename Base::ProducerTicket;
@@ -101,6 +111,12 @@ public:
   using Base::is_stopped;
   using Base::start;
   using Base::stop;
+
+  template <class Consumer>
+  size_t acquire_consumer_idx(Consumer& c)
+  {
+    return consumer_ctx_.acquire_idx(c);
+  }
 
   template <class Consumer>
   ConsumerTicket attach_consumer(Consumer& c)

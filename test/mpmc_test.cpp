@@ -265,4 +265,37 @@ TEST_CASE("Synchronized Non-Blocking MPMC functional test")
   }
 }
 
+TEST_CASE("Synchronized Consumer and Producer Blocking MPMC functional test")
+{
+  // this would mean that every message on the queue would be consumed only
+  // once by one of the consumers
+  constexpr bool _MULTICAST_ = false;
+
+  using Queue = SPMCMulticastQueueReliableBounded<Order, 2, 2, 2, _MULTICAST_>;
+  Queue q1(2);
+
+  constexpr bool blocking = true;
+  ConsumerBlocking<Queue> c1{q1};
+  ConsumerBlocking<Queue> c2{q1};
+
+  ProducerBlocking<Queue> p1(q1);
+  ProducerBlocking<Queue> p2(q1);
+  q1.start();
+
+  CHECK(ProduceReturnCode::Published == p1.emplace(1u, 1u, 100.0, 'A'));
+  CHECK(ProduceReturnCode::Published == p2.emplace(2u, 2u, 100.0, 'A'));
+  CHECK(ConsumeReturnCode::Consumed == c1.consume([](const Order& o) { CHECK(o.id == 1u); }));
+  CHECK(ConsumeReturnCode::Consumed == c2.consume([](const Order& o) { CHECK(o.id == 2u); }));
+
+  CHECK(ProduceReturnCode::Published == p1.emplace(3u, 1u, 100.0, 'A'));
+  CHECK(ProduceReturnCode::Published == p2.emplace(4u, 2u, 100.0, 'A'));
+  CHECK(ConsumeReturnCode::Consumed == c1.consume([](const Order& o) { CHECK(o.id == 3u); }));
+  CHECK(ConsumeReturnCode::Consumed == c2.consume([](const Order& o) { CHECK(o.id == 4u); }));
+
+  CHECK(ProduceReturnCode::Published == p1.emplace(5u, 1u, 100.0, 'A'));
+  CHECK(ProduceReturnCode::Published == p2.emplace(6u, 2u, 100.0, 'A'));
+  CHECK(ConsumeReturnCode::Consumed == c2.consume([](const Order& o) { CHECK(o.id == 5u); }));
+  CHECK(ConsumeReturnCode::Consumed == c1.consume([](const Order& o) { CHECK(o.id == 6u); }));
+}
+
 int main(int argc, char** argv) { return Catch::Session().run(argc, argv); }
