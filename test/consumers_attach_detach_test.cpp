@@ -14,9 +14,11 @@
  * limitations under the License.
  */
 
+#include <atomic>
 #include <catch2/catch_all.hpp>
 #include <iostream>
 #include <list>
+#include <memory>
 #include <mpmc.h>
 #include <mutex>
 #include <random>
@@ -24,6 +26,7 @@
 
 #include "common_test_utils.h"
 #include "detail/common.h"
+#include "detail/consumer.h"
 
 TEST_CASE("SingleThreaded SPMC attach detach test")
 {
@@ -48,7 +51,7 @@ TEST_CASE("SingleThreaded SPMC attach detach test")
     consumers.push_back(std::thread(
       [&q, i, &guard, CONSUMER_N, &consumer_joined_num]()
       {
-        // each consumer would attach / detach themslevs ATTACH_DETACH_ITERATIONS
+        // each consumer would attach / detach themselves ATTACH_DETACH_ITERATIONS
         for (int j = 0; j < ATTACH_DETACH_ITERATIONS; ++j)
         {
           size_t consumed_num = 0;
@@ -172,4 +175,85 @@ TEST_CASE("SingleThreaded ADAPTIVE Blocking SPMC attach detach test")
 }
 #endif
 
+TEST_CASE(
+  "Multi-threaded Anycast MPMC attach detach test - consumers consuming unique items from a queue")
+{
+  TLOG << "\n  " << Catch::getResultCapture().getCurrentTestName() << "\n";
+
+  constexpr size_t _MAX_CONSUMERS_ = 3;
+  constexpr size_t _MAX_PUBLISHERS_ = 4;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 64;
+  constexpr size_t _ATTACH_DETACH_ITERATIONS_ = 4000;
+  constexpr size_t _N_PER_ITERATION_ = 513;
+  constexpr bool _MULTICAST_ = false;
+
+  using Queue =
+    SPMCMulticastQueueReliableBounded<OrderNonTrivial, _MAX_CONSUMERS_, _MAX_PUBLISHERS_, 4, _MULTICAST_>;
+
+  std::string s;
+  std::mutex guard;
+  Queue q(_PUBLISHER_QUEUE_SIZE);
+  std::srand(std::time(nullptr));
+
+  std::vector<std::thread> consumer_threads;
+  for (size_t consumer_id = 0; consumer_id < _MAX_CONSUMERS_; ++consumer_id)
+  {
+    consumer_threads.push_back(std::thread(
+      [&, id = consumer_id]()
+      {
+        try
+        {
+          for (int i = 0; i < _ATTACH_DETACH_ITERATIONS_; ++i)
+          {
+            auto c = std::make_unique<ConsumerBlocking<Queue>>(q);
+            int j = 0;
+            size_t msg_consumed = 0;
+            while (msg_consumed < _N_PER_ITERATION_)
+            {
+              auto r = c->consume([&](const OrderNonTrivial& r) mutable { ++msg_consumed; });
+            }
+          }
+        }
+        catch (const std::exception& e)
+        {
+          TLOG << "\n got exception " << e.what();
+        }
+      }));
+  }
+
+  std::vector<std::thread> producers;
+  q.start();
+
+  for (size_t i = 1; i <= _MAX_PUBLISHERS_; ++i)
+  {
+    producers.emplace_back(std::thread(
+      [&q]()
+      {
+        try
+        {
+          ProducerBlocking<Queue> p1(q);
+
+          size_t n = 1;
+          while (1)
+          {
+            if (p1.emplace(OrderNonTrivial{n, 1U, 100.1, 'B'}) == ProduceReturnCode::NotRunning)
+              break;
+          }
+        }
+        catch (const std::exception& e)
+        {
+          TLOG << "\n got exception " << e.what();
+        }
+      }));
+  }
+
+  for (auto& c : consumer_threads)
+    c.join();
+
+  TLOG << "\n all consumers are done\n";
+  q.stop();
+
+  for (auto& p : producers)
+    p.join();
+}
 int main(int argc, char** argv) { return Catch::Session().run(argc, argv); }

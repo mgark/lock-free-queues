@@ -29,6 +29,7 @@ TEST_CASE("SingleThreaded Anycast MPMC attach detach test")
 
   AnycastConsumerGroup<Queue> consumer_group({std::to_address(&queues.front())});
   std::vector<std::thread> consumers;
+  std::srand(std::time(nullptr));
 
   for (size_t consumer_id = 0; consumer_id < _MAX_CONSUMERS_; ++consumer_id)
   {
@@ -37,12 +38,10 @@ TEST_CASE("SingleThreaded Anycast MPMC attach detach test")
       {
         try
         {
-          std::srand(std::time(nullptr));
           AnycastConsumerBlocking<Queue> c(consumer_group);
 
           for (int i = 0; i < _ATTACH_DETACH_ITERATIONS_; ++i)
           {
-            std::srand(std::time(nullptr));
             size_t idx = 1 + (std::rand() % (_MAX_PUBLISHERS_ - 1));
             bool attach = (i + consumer_id) & 1;
             if (id == 0 /*so that we always got at least one consumer*/ || attach)
@@ -133,6 +132,7 @@ TEST_CASE("Multi-threaded Anycast MPMC attach detach test")
   std::deque<Queue> queues;
   queues.emplace_back(_PUBLISHER_QUEUE_SIZE);
   queues.emplace_back(_PUBLISHER_QUEUE_SIZE);
+  std::srand(std::time(nullptr));
 
   AnycastConsumerGroup<Queue> consumer_group({std::to_address(&queues[0]), std::to_address(&queues[1])});
   std::vector<std::thread> consumers;
@@ -144,11 +144,9 @@ TEST_CASE("Multi-threaded Anycast MPMC attach detach test")
       {
         try
         {
-          std::srand(std::time(nullptr));
           AnycastConsumerBlocking<Queue> c(consumer_group);
           for (int i = 0; i < _ATTACH_DETACH_ITERATIONS_; ++i)
           {
-            std::srand(std::time(nullptr));
             bool attach = !(i % 10 == 0);
             size_t queue_idx = i % queues.size();
 

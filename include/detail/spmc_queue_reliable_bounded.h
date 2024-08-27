@@ -96,32 +96,29 @@ private:
     {
       if (c.consumer_next_idx_ == NEXT_CONSUMER_IDX_NEEDED)
       {
-        // let's lock in our consumer next idx to the least possible idx so that
-        // producer would not overrun us
-        size_t idx = consumer_idx_.load(std::memory_order_acquire);
-        consumers_progress_[c.consumer_id_].idx.store(idx, std::memory_order_release);
-
-        size_t last_idx = consumer_idx_.fetch_add(1, std::memory_order_acq_rel);
-        if (idx < last_idx)
-        {
-          // we can improve our next consumer idx given we know global last consumer idx
-          consumers_progress_[c.consumer_id_].idx.store(last_idx, std::memory_order_release);
-        }
-
         // as next_consumer_idx is recorded in the local consumer context, this would help
         // non-blocking consumers to safely resume consumption
-        c.consumer_next_idx_ = last_idx;
+        c.consumer_next_idx_ = acquire_idx(c.consumer_id_);
       }
 
       return c.consumer_next_idx_;
     }
 
-    // TODO: pass producer ref to guarantee it is called by producer
-    size_t acquire_first_idx(size_t consumer_id) requires(_synchronized_consumer_)
+    size_t acquire_idx(size_t consumer_id) requires(_synchronized_consumer_)
     {
-      // it is ok to increment consumer_idx_ first before updating consumer_progress as long as
-      // acquire_first_idx is called by one of the producers
-      return consumer_idx_.fetch_add(1, std::memory_order_acq_rel);
+      // let's lock in our consumer next idx to the least possible idx so that
+      // producer would not overrun us
+      size_t idx = consumer_idx_.load(std::memory_order_acquire);
+      consumers_progress_[consumer_id].idx.store(idx, std::memory_order_release);
+
+      size_t last_idx = consumer_idx_.fetch_add(1, std::memory_order_acq_rel);
+      if (idx < last_idx)
+      {
+        // we can improve our next consumer idx given we know global last consumer idx
+        consumers_progress_[consumer_id].idx.store(last_idx, std::memory_order_release);
+      }
+
+      return last_idx;
     }
   };
 
@@ -251,8 +248,6 @@ public:
               // if the queue has not started, then let's assign the next read idx by ourselves!
               if constexpr (_synchronized_consumer_)
               {
-                this->consumer_ctx_.consumers_progress_.at(i).previous_version.store(
-                  version_type{}, std::memory_order_release);
                 this->consumer_ctx_.consumers_progress_.at(i).idx.store(NEXT_CONSUMER_IDX_NEEDED,
                                                                         std::memory_order_release);
               }
@@ -370,10 +365,10 @@ public:
       {
         if constexpr (_synchronized_consumer_)
         {
-          // synchronized consumers must acquire their first idx in the producer so
-          // that consumer_progress can be updated by producer as well!
-          size_t idx = consumer_ctx_.acquire_first_idx(i);
-          consumer_ctx_.consumers_progress_[i].idx.store(idx, std::memory_order_release);
+          // consumer_next_idx = consumer_ctx_.acquire_idx(i);
+          // synchronized consumers are a bit special in that they don't lock in consume idx right away when joining as
+          // that is not requried since they don't have to consume all the messages
+          this->consumer_ctx_.consumers_progress_[i].idx.store(NEXT_CONSUMER_IDX_NEEDED, std::memory_order_release);
         }
         else
         {
@@ -498,8 +493,8 @@ public:
         // when new consumer joins it is important to pass it producer idx for which all the smaller indicies are fully published
         // and visible to other cores too, otherwise consumers may  just wrap around the array and consume non-finished item!
         // Array Size=3, versions [0, 1, 1], If consumers were to join at index 1, it would consume index 1, index 2, then
-        // warp to consume index 0 again and if the other publisher were still not complete publishing, it would just consume index 0,
-        // because after consuming index 2 it would change next expected version to 0!
+        // warp to consume index 0 again and if the other publisher were still not completed publishing, it would just
+        // consume index 0, because after consuming index 2 it would change next expected version to 0!
         size_t consumer_next_idx = try_accept_new_consumer(i, min_next_producer_idx_local); // TODO: fix !
         if (consumer_next_idx < NEXT_CONSUMER_IDX_NEEDED)
         {

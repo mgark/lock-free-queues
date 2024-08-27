@@ -43,6 +43,9 @@ protected:
   size_t next_checkout_point_idx_;
   size_t items_per_batch_;
   mutable size_t queue_idx_;
+#ifdef _ADDITIONAL_TRACE_
+  typename Queue::ConsumerTicket original_ticket;
+#endif
 
   friend Queue;
   friend typename Queue::Base;
@@ -109,6 +112,9 @@ protected:
     auto ticket = q->attach_consumer(*this);
     if (ticket.ret_code == ConsumerAttachReturnCode::Attached)
     {
+#ifdef _ADDITIONAL_TRACE_
+      original_ticket = ticket;
+#endif
       n_ = ticket.n;
       idx_mask_ = n_ - 1;
 
