@@ -50,15 +50,11 @@ class SPMCMulticastQueueReliableAdaptiveBounded
       std::atomic<size_t> idx;
     };
 
-    std::array<ProducerProgress, _MAX_PRODUCER_N_ + 1> producer_progress_;
     std::array<std::atomic<bool>, _MAX_PRODUCER_N_ + 1> producer_registry_;
 
     SPMCMulticastQueueReliableAdaptiveBounded& host_;
     ProducerContext(SPMCMulticastQueueReliableAdaptiveBounded& host) : host_(host)
     {
-      for (auto it = std::begin(producer_progress_); it != std::end(producer_progress_); ++it)
-        it->idx.store(PRODUCER_IS_WELCOME, std::memory_order_release);
-
       std::fill(std::begin(producer_registry_), std::end(producer_registry_), 0 /*unlocked*/);
 
       producer_idx_.store(std::numeric_limits<size_t>::max(), std::memory_order_release);
@@ -91,7 +87,6 @@ class SPMCMulticastQueueReliableAdaptiveBounded
       do
       {
         new_idx = 1 + old_idx;
-        host_.producer_ctx_.producer_progress_[p.producer_id_].idx.store(PRODUCER_JOINED, std::memory_order_release);
       } while (!producer_idx_.compare_exchange_strong(old_idx, new_idx, std::memory_order_release,
                                                       std::memory_order_acquire));
       return new_idx;
@@ -110,6 +105,8 @@ class SPMCMulticastQueueReliableAdaptiveBounded
   alignas(64) std::atomic<int> consumers_pending_attach_;
   std::atomic<size_t> max_consumer_id_;
   size_t prev_version_;
+
+  std::vector<std::atomic_size_t> rollover_ids_;
 
 public:
   using version_type = VersionType;
@@ -133,10 +130,14 @@ public:
       producer_ctx_(*this),
       consumers_pending_attach_(0),
       max_consumer_id_(0),
-      prev_version_(0)
+      prev_version_(0),
+      rollover_ids_(this->max_queue_num_)
   {
     for (auto it = std::begin(consumers_progress_); it != std::end(consumers_progress_); ++it)
       it->idx.store(CONSUMER_IS_WELCOME, std::memory_order_release);
+
+    // for (auto it = std::begin(rollover_ids_); it != std::end(rollover_ids_); ++it)
+    //   it->store(0, std::memory_order_release);
 
     std::fill(std::begin(consumers_registry_), std::end(consumers_registry_), 0 /*unlocked*/);
   }
@@ -197,18 +198,29 @@ public:
           if (stopped)
           {
             detach_consumer(i);
-            return {0, 0, CONSUMER_IS_WELCOME, 0 /*nodes per batch does not matter*/, 0, 0, ConsumerAttachReturnCode::Stopped};
+            return {0, 0, CONSUMER_IS_WELCOME, 0 /*nodes per batch does not matter*/, 0, 0, 0, ConsumerAttachReturnCode::Stopped};
           }
 
           size_t queue_sz = this->initial_sz_ * POWER_OF_TWO[consumer_queue_idx];
           size_t items_per_batch = queue_sz / _BATCH_NUM_;
-          return {queue_sz, i, consumer_next_idx, items_per_batch, consumer_queue_idx, previous_version, ConsumerAttachReturnCode::Attached};
+          size_t idx_mask = queue_sz - 1;
+          size_t version_checkpoint_idx = this->rollover_ids_[consumer_queue_idx] & idx_mask;
+          if (version_checkpoint_idx == 0)
+            version_checkpoint_idx = queue_sz;
+          return {version_checkpoint_idx,
+                  i,
+                  consumer_next_idx,
+                  items_per_batch,
+                  consumer_queue_idx,
+                  previous_version,
+                  idx_mask,
+                  ConsumerAttachReturnCode::Attached};
         } // else someone stole the locker just before us!
       }
     }
 
     // not enough space for the new consumer!
-    return {0, 0, CONSUMER_IS_WELCOME, 0 /*nodes per batch does not matter*/, 0, 0, ConsumerAttachReturnCode::ConsumerLimitReached};
+    return {0, 0, CONSUMER_IS_WELCOME, 0 /*nodes per batch does not matter*/, 0, 0, 0, ConsumerAttachReturnCode::ConsumerLimitReached};
   }
 
   bool detach_consumer(size_t consumer_id)
@@ -290,7 +302,6 @@ public:
     bool is_locked = locker.load(std::memory_order_acquire);
     if (is_locked)
     {
-      this->producer_ctx_.producer_progress_.at(producer_id).idx.store(PRODUCER_IS_WELCOME, std::memory_order_release);
       if (locker.compare_exchange_strong(is_locked, false, std::memory_order_release, std::memory_order_relaxed))
       {
         // this->consumers_pending_dettach_.fetch_add(1, std::memory_order_release);
@@ -342,6 +353,11 @@ public:
   size_t aquire_first_idx(Producer& p)
   {
     return producer_ctx_.aquire_first_idx(p);
+  }
+
+  size_t get_producer_idx() const
+  {
+    return producer_ctx_.producer_idx_.load(std::memory_order_relaxed);
   }
 
   template <class Producer, class... Args, bool blocking = Producer::blocking_v>
@@ -410,6 +426,7 @@ public:
 
           this->increment_queue_size(new_sz); // now we make new producer queue visible to the consumers!
           idx = original_idx & this->idx_mask_; // index needs to be re-adjusted as the mask changed!
+          this->rollover_ids_[back_buffer_idx].store(original_idx, std::memory_order_release);
           break;
         }
       }

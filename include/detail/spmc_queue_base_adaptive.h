@@ -36,6 +36,7 @@ public:
     size_t items_per_batch;
     size_t queue_idx;
     VersionType previous_version;
+    size_t idx_mask;
     ConsumerAttachReturnCode ret_code;
   };
 
@@ -71,6 +72,7 @@ protected:
   Spinlock slow_path_guard_;
   std::atomic<size_t> front_buffer_idx_;
   std::atomic<size_t> back_buffer_idx_;
+  std::atomic<size_t> rollover_idx_;
 
   // these variables update quite frequently
   std::atomic<QueueState> state_{QueueState::Created};
@@ -86,7 +88,8 @@ public:
       max_outstanding_non_consumed_items_((_BATCH_NUM_ - 1) * items_per_batch_),
       alloc_(alloc),
       front_buffer_idx_(0),
-      back_buffer_idx_(0)
+      back_buffer_idx_(0),
+      rollover_idx_(0)
   {
     // simple geometric sum give that ratio is always 2!
     capacity_ = initial_sz_ * (POWER_OF_TWO[max_queue_num_] - 1);

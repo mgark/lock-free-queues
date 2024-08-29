@@ -31,11 +31,11 @@ template <class T, size_t _MAX_CONSUMER_N_ = 8, size_t _MAX_PRODUCER_N_ = 1, siz
           class Allocator = std::allocator<T>, class VersionType = size_t>
 class SPMCMulticastQueueUnreliable
   : public SPMCMulticastQueueBase<T, SPMCMulticastQueueUnreliable<T, _MAX_CONSUMER_N_, _MAX_PRODUCER_N_, _BATCH_NUM_, Allocator>,
-                                  _MAX_CONSUMER_N_, _BATCH_NUM_, true, Allocator, VersionType>
+                                  _MAX_CONSUMER_N_, _MAX_PRODUCER_N_, _BATCH_NUM_, true, Allocator, VersionType>
 {
 public:
   using Base =
-    SPMCMulticastQueueBase<T, SPMCMulticastQueueUnreliable, _MAX_CONSUMER_N_, _BATCH_NUM_, true, Allocator, VersionType>;
+    SPMCMulticastQueueBase<T, SPMCMulticastQueueUnreliable, _MAX_CONSUMER_N_, _MAX_PRODUCER_N_, _BATCH_NUM_, true, Allocator, VersionType>;
   using Base::_synchronized_consumer_;
 
 private:
@@ -118,6 +118,7 @@ public:
     return consumer_ctx_.acquire_idx(c);
   }
 
+  // TODO: rethink attach logic here, probably should give the latest value
   template <class Consumer>
   ConsumerTicket attach_consumer(Consumer& c)
   {

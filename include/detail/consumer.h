@@ -95,6 +95,7 @@ public:
     items_per_batch_ = batch_sz;
     next_checkout_point_idx_ = items_per_batch_ + (consumer_next_idx_ - consumer_next_idx_ % items_per_batch_);
     n_ = consumer_next_idx_ & idx_mask_; // need to adjust n_!!!!
+    //++previous_version_;
     if (0 == n_)
       n_ = queue_sz;
 
@@ -116,7 +117,14 @@ protected:
       original_ticket = ticket;
 #endif
       n_ = ticket.n;
-      idx_mask_ = n_ - 1;
+      if constexpr (requires { ticket.idx_mask; })
+      {
+        idx_mask_ = ticket.idx_mask;
+      }
+      else
+      {
+        idx_mask_ = n_ - 1;
+      }
 
       q_ = q;
       consumer_id_ = ticket.consumer_id;
@@ -384,7 +392,7 @@ struct ConsumerNonBlocking : ConsumerBase<Queue>
   }
 };
 
-// TODO: how to ensure consumer group cannot out-live the queues themsleves?
+// TODO: how to ensure consumer group cannot out-live the queues themselves?
 template <class Queue, size_t MAX_SIZE = 8>
 struct alignas(64) AnycastConsumerGroup
 {
