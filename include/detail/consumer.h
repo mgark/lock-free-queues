@@ -575,7 +575,7 @@ private:
         Spinlock::scoped_lock autounlock(spinlock, std::adopt_lock);
         if (consumer_group_.queues[idx].load(std::memory_order_relaxed) != nullptr)
         {
-          // this check is very necesary as by the time we've been trying to get a lock the queue might have been detached or even newly attached
+          // this check is very necessary as by the time we've been trying to get a lock the queue might have been detached or even newly attached
           typename ConsumerGroupType::ConsumerType& consumer_non_blocking =
             consumer_group_.consumers[current_queue_idx_];
           ConsumeReturnCode current_ret = std::forward<F>(consumer_routine)(consumer_non_blocking);
