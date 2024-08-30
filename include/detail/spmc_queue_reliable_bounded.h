@@ -424,15 +424,7 @@ public:
 
             size_t queue_version = consumer_next_idx / this->size();
             version_type previous_version;
-            if constexpr (_synchronized_producer_)
-            {
-              previous_version = queue_version;
-            }
-            else
-            {
-              previous_version = (queue_version & 1) ? version_type{1u} : version_type{};
-            }
-
+            previous_version = (queue_version & 1) ? version_type{1u} : version_type{};
             this->consumer_ctx_.consumers_progress_[i].previous_version.store(
               previous_version, std::memory_order_release);
             this->consumer_ctx_.consumers_progress_[i].idx.store(consumer_next_idx, std::memory_order_release);
@@ -615,8 +607,7 @@ public:
       }
       else if constexpr (_synchronized_producer_)
       {
-        // version = ((original_idx / this->size()) & 1u) ? version_type{1u} : version_type{0};
-        version = original_idx / this->size();
+        version = ((original_idx / this->size()) & 1u) ? version_type{1u} : version_type{0};
       }
       else
       {
@@ -647,7 +638,7 @@ public:
       // newly constructed object must already have set re-used bit to 0!
       obj.store(std::forward<Args>(args)...);
     }
-    else if constexpr (_synchronized_consumer_ || _synchronized_producer_)
+    else if constexpr (_synchronized_consumer_)
     {
       NodeAllocTraits::construct(this->alloc_, static_cast<T*>(storage), std::forward<Args>(args)...);
       node.version_.store(1 + version, std::memory_order_release);
@@ -677,41 +668,11 @@ public:
   }
 
   template <class C, class F>
-  ConsumeReturnCode consume_by_func(size_t idx, size_t& queue_idx, Node& node, auto version, C& consumer,
-                                    F&& f) requires(!_synchronized_consumer_ && !_synchronized_producer_)
+  ConsumeReturnCode consume_by_func(size_t idx, size_t& queue_idx, Node& node, auto version,
+                                    C& consumer, F&& f) requires(!_synchronized_consumer_)
   {
 
     if (consumer.previous_version_ ^ version)
-    {
-      std::forward<F>(f)(node.storage_);
-      if (idx + 1u == this->n_)
-      { // need to
-        // rollover
-        consumer.previous_version_ = version;
-      }
-
-      ++consumer.consumer_next_idx_;
-      if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
-      {
-        this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
-          consumer.consumer_next_idx_, std::memory_order_release);
-        consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
-      }
-
-      return ConsumeReturnCode::Consumed;
-    }
-    else
-    {
-      return ConsumeReturnCode::NothingToConsume;
-    }
-  }
-
-  template <class C, class F>
-  ConsumeReturnCode consume_by_func(size_t idx, size_t& queue_idx, Node& node, auto version, C& consumer,
-                                    F&& f) requires(!_synchronized_consumer_ && _synchronized_producer_)
-  {
-    if (consumer.previous_version_ < version)
-    // if (consumer.previous_version_ + 1 == version)
     {
       std::forward<F>(f)(node.storage_);
       if (idx + 1u == this->n_)
@@ -756,8 +717,7 @@ public:
   }
 
   template <class C>
-  const T* peek(Node& node, auto version, C& consumer) const
-    requires(!_synchronized_consumer_ && !_synchronized_producer_)
+  const T* peek(Node& node, auto version, C& consumer) const requires(!_synchronized_consumer_)
   {
     if (consumer.previous_version_ ^ version)
     {
@@ -770,50 +730,10 @@ public:
   }
 
   template <class C>
-  const T* peek(Node& node, auto version, C& consumer) const
-    requires(!_synchronized_consumer_ && _synchronized_producer_)
-  {
-    if (consumer.previous_version_ < version)
-    {
-      return reinterpret_cast<const T*>(node.storage_);
-    }
-    else
-    {
-      return nullptr;
-    }
-  }
-
-  template <class C>
   ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node, version_type version,
-                         C& consumer) requires(!_synchronized_consumer_ && !_synchronized_producer_)
+                         C& consumer) requires(!_synchronized_consumer_)
   {
     if (consumer.previous_version_ ^ version)
-    {
-      if (idx + 1u == this->n_)
-      { // need to
-        // rollover
-        consumer.previous_version_ = version;
-      }
-      ++consumer.consumer_next_idx_;
-      if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
-      {
-        this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
-          consumer.consumer_next_idx_, std::memory_order_release);
-        consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
-      }
-      return ConsumeReturnCode::Consumed;
-    }
-    else
-    {
-      return ConsumeReturnCode::NothingToConsume;
-    }
-  }
-
-  template <class C>
-  ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node, version_type version,
-                         C& consumer) requires(!_synchronized_consumer_ && _synchronized_producer_)
-  {
-    if (consumer.previous_version_ < version)
     {
       if (idx + 1u == this->n_)
       { // need to

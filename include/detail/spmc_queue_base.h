@@ -33,8 +33,7 @@ public:
   using type = T;
   static constexpr bool _synchronized_consumer_ = _MAX_CONSUMER_N_ > 1 && !_MULTICAST_;
   static constexpr bool _synchronized_producer_ = _MAX_PRODUCER_N_ > 1;
-  static constexpr bool _reuse_single_bit_from_object_ =
-    msb_always_0<T> && not _synchronized_producer_ && not _synchronized_consumer_;
+  static constexpr bool _reuse_single_bit_from_object_ = msb_always_0<T> && not _synchronized_consumer_;
 
   struct ConsumerTicket
   {
