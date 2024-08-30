@@ -459,7 +459,7 @@ TEST_CASE("Bounded blocking reliable anycast MPSC attach detach & stress test")
   TLOG << "\n  " << Catch::getResultCapture().getCurrentTestName() << "\n";
 
   constexpr size_t _MAX_CONSUMERS_ = 1;
-  constexpr size_t _MAX_PUBLISHERS_ = 4;
+  constexpr size_t _MAX_PUBLISHERS_ = 8;
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 4;
   constexpr size_t _ATTACH_DETACH_ITERATIONS_ = 40000;
   constexpr size_t _N_PER_ITERATION_ = 513;
@@ -727,9 +727,9 @@ TEST_CASE(
 {
   TLOG << "\n  " << Catch::getResultCapture().getCurrentTestName() << "\n";
 
-  constexpr size_t _MAX_CONSUMERS_ = 3;
-  constexpr size_t _MAX_PUBLISHERS_ = 4;
-  constexpr size_t _PUBLISHER_QUEUE_SIZE = 64;
+  constexpr size_t _MAX_CONSUMERS_ = 8;
+  constexpr size_t _MAX_PUBLISHERS_ = 8;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 4;
   constexpr size_t _ATTACH_DETACH_ITERATIONS_ = 20000;
   constexpr size_t _N_PER_CONSUMER_ = 1000000;
   constexpr size_t _N_TO_CONSUME_ = _N_PER_CONSUMER_ * _MAX_CONSUMERS_;
@@ -870,8 +870,8 @@ TEST_CASE("Adaptive blocking reliable multicast SPMC attach detach & stress test
   std::string s;
   std::mutex guard;
   constexpr size_t _MAX_CONSUMERS_ = 3;
-  constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
-  constexpr size_t N = POWER_OF_TWO[22];
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 4;
+  constexpr size_t N = POWER_OF_TWO[21];
   constexpr size_t ATTACH_DETACH_ITERATIONS = 200;
   constexpr size_t CONSUME_PER_ITERATION = N / ATTACH_DETACH_ITERATIONS;
   using Queue = SPMCMulticastQueueReliableAdaptiveBounded<size_t, 2 * _MAX_CONSUMERS_>;
