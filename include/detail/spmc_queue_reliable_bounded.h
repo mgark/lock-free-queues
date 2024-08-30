@@ -559,7 +559,8 @@ public:
 
       size_t min_next_producer_idx_local = original_idx;
       size_t min_next_consumer_idx_local = consumer_ctx_.get_next_idx();
-      auto next_max_consumer_id = this->next_max_consumer_id_.load(std::memory_order_acquire);
+      auto next_max_consumer_id =
+        _MAX_CONSUMER_N_; // TODO: this->next_max_consumer_id_.load(std::memory_order_acquire);
       for (size_t i = 0; i < next_max_consumer_id; ++i)
       {
         size_t consumer_next_idx = try_accept_new_consumer(i, min_next_producer_idx_local);

@@ -18,8 +18,8 @@ TEST_CASE(
   std::string s;
   std::mutex guard;
   constexpr size_t _MAX_CONSUMERS_ = 1;
-  constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
-  constexpr size_t N = 10'000'000'000;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 4;
+  constexpr size_t N = 10'000'000;
   constexpr size_t ATTACH_DETACH_ITERATIONS = 20000;
   constexpr size_t CONSUMED_PER_ITERATION = N / ATTACH_DETACH_ITERATIONS / 100;
   using Queue = SPMCMulticastQueueReliableBounded<size_t, _MAX_CONSUMERS_>;
@@ -127,8 +127,8 @@ TEST_CASE(
   std::string s;
   std::mutex guard;
   constexpr size_t _MAX_CONSUMERS_ = 1;
-  constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
-  constexpr size_t N = 10'000'000'000;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 4;
+  constexpr size_t N = 10'000'000;
   constexpr size_t ATTACH_DETACH_ITERATIONS = 20000;
   constexpr size_t CONSUMED_PER_ITERATION = N / ATTACH_DETACH_ITERATIONS / 100;
   using Queue = SPMCMulticastQueueReliableBounded<size_t, 3, 3>;
@@ -232,12 +232,12 @@ TEST_CASE("Bounded blocking reliable multicast SPMC attach detach & stress test"
 {
   std::string s;
   std::mutex guard;
-  constexpr size_t _MAX_CONSUMERS_ = 3;
-  constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
-  constexpr size_t N = 10'000'000'000;
-  constexpr size_t ATTACH_DETACH_ITERATIONS = 20000;
-  constexpr size_t CONSUMED_PER_ITERATION = N / ATTACH_DETACH_ITERATIONS / 100;
-  using Queue = SPMCMulticastQueueReliableBounded<size_t, 2 * _MAX_CONSUMERS_>;
+  constexpr size_t _MAX_CONSUMERS_ = 8;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 4;
+  constexpr size_t N_PER_CONSUMER = 20000;
+  constexpr size_t ATTACH_DETACH_ITERATIONS = 3000;
+  constexpr size_t CONSUMED_PER_ITERATION = N_PER_CONSUMER / ATTACH_DETACH_ITERATIONS;
+  using Queue = SPMCMulticastQueueReliableBounded<size_t, _MAX_CONSUMERS_>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
 
   std::vector<std::thread> consumer_threads;
@@ -272,12 +272,15 @@ TEST_CASE("Bounded blocking reliable multicast SPMC attach detach & stress test"
                   per_consumer_actual_sum[consumer_idx].load(std::memory_order_relaxed) + idx,
                   std::memory_order_release);
 
+                // if (consumer_idx == 0)
+                //   TLOG << "\n consumed " << idx;
+
                 if (0 == consumed_num++)
                 {
                   // on the very first item, let's calculate our target checksum
                   size_t extra_checksum = 0;
-                  for (size_t i = idx; i < idx + CONSUMED_PER_ITERATION; ++i)
-                    extra_checksum += i;
+                  for (size_t k = idx; k < idx + CONSUMED_PER_ITERATION; ++k)
+                    extra_checksum += k;
 
                   // relaxed memory order is fine here, because updates are done always by the same thread!
                   per_consumer_target_sum[consumer_idx].store(
@@ -290,10 +293,11 @@ TEST_CASE("Bounded blocking reliable multicast SPMC attach detach & stress test"
           CHECK(consumed_num == CONSUMED_PER_ITERATION);
         }
         ++consumer_finished_num;
+        TLOG << "\n finished consumer = " << i;
       }));
   }
   std::thread producer(
-    [&q, &consumer_finished_num, N]()
+    [&q, &consumer_finished_num, N_PER_CONSUMER]()
     {
       ProducerBlocking<Queue> p(q);
       q.start();
@@ -328,10 +332,12 @@ TEST_CASE("Bounded blocking reliable multicast SPMC attach detach & stress test"
       producers_checksum += per_consumer_target_sum[i].load(std::memory_order_relaxed);
 
 #ifdef _ADDITIONAL_TRACE_
-    TLOG << "\n published items = " << q.get_producer_idx() << " items to consume = " << N
+    TLOG << "\n published items = " << q.get_producer_idx() << " items to consume = " << N_PER_CONSUMER
          << " consumers_checksum=" << consumers_checksum << " producers_checksum=" << producers_checksum;
 #endif
 
+    if (consumers_checksum != producers_checksum)
+      std::abort();
   } while (consumers_checksum != producers_checksum);
 }
 
@@ -339,11 +345,11 @@ TEST_CASE("Bounded blocking reliable anycast MPMC attach detach & stress test")
 {
   TLOG << "\n  " << Catch::getResultCapture().getCurrentTestName() << "\n";
 
-  constexpr size_t _MAX_CONSUMERS_ = 3;
-  constexpr size_t _MAX_PUBLISHERS_ = 4;
-  constexpr size_t _PUBLISHER_QUEUE_SIZE = 64;
-  constexpr size_t _ATTACH_DETACH_ITERATIONS_ = 40000;
-  constexpr size_t _N_PER_ITERATION_ = 513;
+  constexpr size_t _MAX_CONSUMERS_ = 8;
+  constexpr size_t _MAX_PUBLISHERS_ = 8;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 4;
+  constexpr size_t _ATTACH_DETACH_ITERATIONS_ = 1000;
+  constexpr size_t _N_PER_ITERATION_ = 3;
   constexpr size_t _N_TO_CONSUME_ = _N_PER_ITERATION_ * _ATTACH_DETACH_ITERATIONS_ * _MAX_CONSUMERS_;
   constexpr bool _MULTICAST_ = false;
 
@@ -454,7 +460,7 @@ TEST_CASE("Bounded blocking reliable anycast MPSC attach detach & stress test")
 
   constexpr size_t _MAX_CONSUMERS_ = 1;
   constexpr size_t _MAX_PUBLISHERS_ = 4;
-  constexpr size_t _PUBLISHER_QUEUE_SIZE = 64;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 4;
   constexpr size_t _ATTACH_DETACH_ITERATIONS_ = 40000;
   constexpr size_t _N_PER_ITERATION_ = 513;
   constexpr size_t _N_TO_CONSUME_ = _N_PER_ITERATION_ * _ATTACH_DETACH_ITERATIONS_ * _MAX_CONSUMERS_;
@@ -481,7 +487,7 @@ TEST_CASE("Bounded blocking reliable anycast MPSC attach detach & stress test")
       [&q, i, &guard, _N_PER_ITERATION_, &per_consumer_actual_sum, &per_consumer_target_sum]()
       {
         // each consumer would attach / detach themselves ATTACH_DETACH_ITERATIONS
-        for (int j = 0; j < _N_PER_ITERATION_; ++j)
+        for (int j = 0; j < _ATTACH_DETACH_ITERATIONS_; ++j)
         {
           size_t consumed_num = 0;
           ConsumerBlocking<Queue> c(q);
@@ -578,11 +584,11 @@ TEST_CASE(
 {
   TLOG << "\n  " << Catch::getResultCapture().getCurrentTestName() << "\n";
 
-  constexpr size_t _MAX_CONSUMERS_ = 3;
-  constexpr size_t _MAX_PUBLISHERS_ = 4;
-  constexpr size_t _PUBLISHER_QUEUE_SIZE = 64;
-  constexpr size_t _ATTACH_DETACH_ITERATIONS_ = 20000;
-  constexpr size_t _N_PER_CONSUMER_ = 1000000;
+  constexpr size_t _MAX_CONSUMERS_ = 8;
+  constexpr size_t _MAX_PUBLISHERS_ = 8;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 4;
+  constexpr size_t _ATTACH_DETACH_ITERATIONS_ = 1000;
+  constexpr size_t _N_PER_CONSUMER_ = 20000;
   constexpr size_t _N_TO_CONSUME_ = _N_PER_CONSUMER_ * _MAX_CONSUMERS_;
   constexpr size_t _N_PER_ITERATION_ = _N_PER_CONSUMER_ / _ATTACH_DETACH_ITERATIONS_;
   constexpr bool _MULTICAST_ = true;
