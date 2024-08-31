@@ -629,7 +629,7 @@ public:
     if constexpr (_reuse_single_bit_from_object_)
     {
       T& obj = reinterpret_cast<T&>(node.storage_);
-      // newly constructed object must already have set re-used bit to 0!
+      // newly constructed object must already have set the re-used bit to 0!
       obj.store(std::forward<Args>(args)...);
     }
     else if constexpr (_synchronized_consumer_)
