@@ -655,12 +655,6 @@ public:
     return ProduceReturnCode::Published;
   }
 
-  version_type calc_version(size_t original_idx)
-  {
-    size_t lap_num = original_idx / this->size();
-    return (lap_num & 1u) ? version_type{1u} : version_type{};
-  }
-
   template <class C, class F>
   ConsumeReturnCode consume_by_func(size_t idx, size_t& queue_idx, Node& node, auto version,
                                     C& consumer, F&& f) requires(!_synchronized_consumer_)
@@ -692,10 +686,9 @@ public:
   }
 
   template <class C, class F>
-  ConsumeReturnCode consume_by_func(size_t idx, size_t& queue_idx, Node& node, auto version,
-                                    C& consumer, F&& f) requires(_synchronized_consumer_)
+  ConsumeReturnCode consume_by_func(size_t idx, size_t& queue_idx, Node& node, version_type version,
+                                    version_type expected_version, C& consumer, F&& f) requires(_synchronized_consumer_)
   {
-    size_t expected_version = 1 + (idx / this->capacity());
     if (expected_version == version)
     {
       std::forward<F>(f)(node.storage_);
@@ -751,9 +744,8 @@ public:
 
   template <class C>
   ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node, version_type version,
-                         C& consumer) requires(_synchronized_consumer_)
+                         version_type expected_version, C& consumer) requires(_synchronized_consumer_)
   {
-    size_t expected_version = 1 + (idx / this->capacity());
     if (expected_version == version)
     {
       this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(

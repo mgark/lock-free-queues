@@ -150,8 +150,12 @@ public:
     size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
     size_t idx = original_idx & consumer.idx_mask_;
     Node& node = this->nodes_[idx];
+    size_t expected_version;
     if constexpr (_synchronized_consumer_)
+    {
       idx = original_idx;
+      expected_version = 1 + (idx / this->capacity());
+    }
 
     do
     {
@@ -165,10 +169,20 @@ public:
         version = node.version_.load(std::memory_order_acquire);
       }
 
-      r = static_cast<Derived&>(*this).consume_by_func(
-        idx, queue_idx, node, version, consumer,
-        [dest](void* storage)
-        { std::memcpy(dest, std::launder(reinterpret_cast<T*>(storage)), sizeof(T)); });
+      if constexpr (_synchronized_consumer_)
+      {
+        r = static_cast<Derived&>(*this).consume_by_func(
+          idx, queue_idx, node, version, expected_version, consumer,
+          [dest](void* storage)
+          { std::memcpy(dest, std::launder(reinterpret_cast<T*>(storage)), sizeof(T)); });
+      }
+      else
+      {
+        r = static_cast<Derived&>(*this).consume_by_func(
+          idx, queue_idx, node, version, consumer,
+          [dest](void* storage)
+          { std::memcpy(dest, std::launder(reinterpret_cast<T*>(storage)), sizeof(T)); });
+      }
       if (r == ConsumeReturnCode::Consumed)
         return r;
 
@@ -187,8 +201,13 @@ public:
     size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
     size_t idx = original_idx & consumer.idx_mask_;
     Node& node = this->nodes_[idx];
+
+    size_t expected_version;
     if constexpr (_synchronized_consumer_)
+    {
       idx = original_idx;
+      expected_version = 1 + (idx / this->capacity());
+    }
 
     VersionType version;
     if constexpr (_reuse_single_bit_from_object_)
@@ -200,10 +219,21 @@ public:
       version = node.version_.load(std::memory_order_acquire);
     }
 
-    auto r = static_cast<Derived&>(*this).consume_by_func(
-      idx, queue_idx, node, version, consumer,
-      [dest](void* storage)
-      { std::memcpy(dest, std::launder(reinterpret_cast<const T*>(storage)), sizeof(T)); });
+    ConsumeReturnCode r;
+    if constexpr (_synchronized_consumer_)
+    {
+      r = static_cast<Derived&>(*this).consume_by_func(
+        idx, queue_idx, node, version, expected_version, consumer,
+        [dest](void* storage)
+        { std::memcpy(dest, std::launder(reinterpret_cast<const T*>(storage)), sizeof(T)); });
+    }
+    else
+    {
+      r = static_cast<Derived&>(*this).consume_by_func(
+        idx, queue_idx, node, version, consumer,
+        [dest](void* storage)
+        { std::memcpy(dest, std::launder(reinterpret_cast<const T*>(storage)), sizeof(T)); });
+    }
 
     if (r == ConsumeReturnCode::Consumed)
     {
@@ -229,8 +259,12 @@ public:
     size_t idx = original_idx & consumer.idx_mask_;
     Node& node = this->nodes_[idx];
 
+    size_t expected_version;
     if constexpr (_synchronized_consumer_)
+    {
       idx = original_idx;
+      expected_version = 1 + (idx / this->capacity());
+    }
 
     do
     {
@@ -244,10 +278,20 @@ public:
         version = node.version_.load(std::memory_order_acquire);
       }
 
-      r = static_cast<Derived&>(*this).consume_by_func(
-        idx, queue_idx, node, version, consumer,
-        [f = std::forward<F>(f)](void* storage) mutable
-        { std::forward<F>(f)(*std::launder(reinterpret_cast<const T*>(storage))); });
+      if constexpr (_synchronized_consumer_)
+      {
+        r = static_cast<Derived&>(*this).consume_by_func(
+          idx, queue_idx, node, version, expected_version, consumer,
+          [f = std::forward<F>(f)](void* storage) mutable
+          { std::forward<F>(f)(*std::launder(reinterpret_cast<const T*>(storage))); });
+      }
+      else
+      {
+        r = static_cast<Derived&>(*this).consume_by_func(
+          idx, queue_idx, node, version, consumer,
+          [f = std::forward<F>(f)](void* storage) mutable
+          { std::forward<F>(f)(*std::launder(reinterpret_cast<const T*>(storage))); });
+      }
       if (r == ConsumeReturnCode::Consumed)
         return r;
 
@@ -263,6 +307,7 @@ public:
   template <class C, class F>
   ConsumeReturnCode consume_non_blocking(size_t& queue_idx, C& consumer, F&& f)
   {
+    ConsumeReturnCode r;
     size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
     size_t idx = original_idx & consumer.idx_mask_;
 
@@ -278,12 +323,21 @@ public:
     }
 
     if constexpr (_synchronized_consumer_)
+    {
       idx = original_idx;
-
-    auto r = static_cast<Derived&>(*this).consume_by_func(
-      idx, queue_idx, node, version, consumer,
-      [f = std::forward<F>(f)](void* storage) mutable
-      { std::forward<F>(f)(*std::launder(reinterpret_cast<const T*>(storage))); });
+      size_t expected_version = 1 + (idx / this->capacity());
+      r = static_cast<Derived&>(*this).consume_by_func(
+        idx, queue_idx, node, version, expected_version, consumer,
+        [f = std::forward<F>(f)](void* storage) mutable
+        { std::forward<F>(f)(*std::launder(reinterpret_cast<const T*>(storage))); });
+    }
+    else
+    {
+      r = static_cast<Derived&>(*this).consume_by_func(
+        idx, queue_idx, node, version, consumer,
+        [f = std::forward<F>(f)](void* storage) mutable
+        { std::forward<F>(f)(*std::launder(reinterpret_cast<const T*>(storage))); });
+    }
 
     if (r == ConsumeReturnCode::Consumed)
     {
@@ -356,8 +410,12 @@ public:
     Node& node = this->nodes_[idx];
     QueueState state;
 
+    size_t expected_version;
     if constexpr (_synchronized_consumer_)
+    {
       idx = original_idx;
+      expected_version = 1 + (idx / this->capacity());
+    }
 
     do
     {
@@ -371,7 +429,14 @@ public:
         version = node.version_.load(std::memory_order_acquire);
       }
 
-      r = static_cast<Derived&>(*this).skip(idx, queue_idx, node, version, consumer);
+      if constexpr (_synchronized_consumer_)
+      {
+        r = static_cast<Derived&>(*this).skip(idx, queue_idx, node, version, expected_version, consumer);
+      }
+      else
+      {
+        r = static_cast<Derived&>(*this).skip(idx, queue_idx, node, version, consumer);
+      }
       if (ConsumeReturnCode::Consumed == r)
         return r;
 
@@ -389,8 +454,6 @@ public:
     size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
     size_t idx = original_idx & consumer.idx_mask_;
     Node& node = this->nodes_[idx];
-    if constexpr (_synchronized_consumer_)
-      idx = original_idx;
 
     VersionType version;
     if constexpr (_reuse_single_bit_from_object_)
@@ -402,7 +465,17 @@ public:
       version = node.version_.load(std::memory_order_acquire);
     }
 
-    auto r = static_cast<Derived&>(*this).skip(idx, queue_idx, node, version, consumer);
+    ConsumeReturnCode r;
+    if constexpr (_synchronized_consumer_)
+    {
+      idx = original_idx;
+      size_t expected_version = 1 + (idx / this->capacity());
+      r = static_cast<Derived&>(*this).skip(idx, queue_idx, node, version, expected_version, consumer);
+    }
+    else
+    {
+      r = static_cast<Derived&>(*this).skip(idx, queue_idx, node, version, consumer);
+    }
     if (r == ConsumeReturnCode::Consumed)
     {
       return r;
