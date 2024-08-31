@@ -114,8 +114,7 @@ public:
   }
 
   /* this functions inserts publisher idx, and it is really meant to be used for debugging*/
-  template <class... Args>
-  ProduceReturnCode emplace_idx() requires std::same_as<size_t, type> || std::same_as<integral_msb_always_0<size_t>, type>
+  ProduceReturnCode emplace_producer_own_idx() requires std::same_as<size_t, type> || std::same_as<integral_msb_always_0<size_t>, type>
   {
     if (PRODUCER_JOIN_INPROGRESS == this->last_producer_idx_)
     {
@@ -126,15 +125,7 @@ public:
       this->last_producer_idx_ = this->q_->aquire_idx(static_cast<Derived&>(*this));
     }
 
-    uint32_t producer_idx = producer_id_;
-    uint32_t original_idx = (uint32_t)this->last_producer_idx_;
-    size_t val;
-    {
-      memcpy(&val, &original_idx, 4);
-      memcpy(((char*)&val) + 4, &producer_idx, 4);
-    }
-
-    auto r = this->q_->emplace(this->last_producer_idx_, *static_cast<Derived*>(this), val);
+    auto r = this->q_->emplace(this->last_producer_idx_, *static_cast<Derived*>(this), this->last_producer_idx_);
     if (ProduceReturnCode::Published == r)
     {
       this->last_producer_idx_ = NEXT_PRODUCER_IDX_NEEDED;

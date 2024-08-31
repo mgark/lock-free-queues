@@ -271,8 +271,7 @@ struct ConsumerBlocking : ConsumerBase<Queue>
 {
   using ConsumerBase<Queue>::ConsumerBase;
   using T = typename Queue::type;
-  using const_iterator =
-    const_consumer_iterator<ConsumerBlocking<Queue>>; // htypename ConsumerBase<Queue>::template const_iterator<ConsumerBlocking<Queue>>;
+  using const_iterator = const_consumer_iterator<ConsumerBlocking<Queue>>;
   static constexpr bool blocking_v = true;
 
   const_iterator cbegin() requires requires
@@ -291,6 +290,8 @@ struct ConsumerBlocking : ConsumerBase<Queue>
   {
     return const_iterator();
   }
+
+  size_t get_consume_idx() const { return this->consumer_next_idx_; }
 
   const T* peek() const requires(!Queue::_synchronized_consumer_)
   {

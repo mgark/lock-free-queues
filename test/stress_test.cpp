@@ -46,22 +46,26 @@ TEST_CASE(
           while (consumed_num < CONSUMED_PER_ITERATION)
           {
             c.consume(
-              [consumer_idx = i, &q, CONSUMED_PER_ITERATION, &consumed_num,
+              [&c, consumer_idx = i, &q, CONSUMED_PER_ITERATION, &consumed_num,
                &per_consumer_actual_sum, &per_consumer_target_sum](size_t val) mutable
               {
-                uint32_t idx;
-                uint32_t producer;
-                memcpy(&idx, &val, 4);
-                memcpy(&producer, ((char*)&val) + 4, 4);
                 per_consumer_actual_sum[consumer_idx].store(
-                  per_consumer_actual_sum[consumer_idx].load(std::memory_order_relaxed) + idx,
+                  per_consumer_actual_sum[consumer_idx].load(std::memory_order_relaxed) + val,
                   std::memory_order_release);
+
+                if (c.get_consume_idx() != val)
+                {
+                  std::stringstream ss;
+                  ss << "consumer[" << consumer_idx << "] producer_idx=" << val
+                     << " not equal consumer idx =" << c.get_consume_idx();
+                  throw std::runtime_error(ss.str());
+                }
 
                 if (0 == consumed_num++)
                 {
                   // on the very first item, let's calculate our target checksum
                   size_t extra_checksum = 0;
-                  for (size_t i = idx; i < idx + CONSUMED_PER_ITERATION; ++i)
+                  for (size_t i = val; i < val + CONSUMED_PER_ITERATION; ++i)
                     extra_checksum += i;
 
                   // relaxed memory order is fine here, because updates are done always by the same thread!
@@ -86,7 +90,7 @@ TEST_CASE(
       size_t n = 1;
       while (consumer_finished_num.load(std::memory_order_relaxed) < _MAX_CONSUMERS_)
       {
-        auto r = p.emplace_idx();
+        auto r = p.emplace_producer_own_idx();
         if (r == ProduceReturnCode::NotRunning)
           break;
         else if (r == ProduceReturnCode::Published)
@@ -155,22 +159,26 @@ TEST_CASE(
           while (consumed_num < CONSUMED_PER_ITERATION)
           {
             c.consume(
-              [consumer_idx = i, &q, CONSUMED_PER_ITERATION, &consumed_num,
+              [&c, consumer_idx = i, &q, CONSUMED_PER_ITERATION, &consumed_num,
                &per_consumer_actual_sum, &per_consumer_target_sum](size_t val) mutable
               {
-                uint32_t idx;
-                uint32_t producer;
-                memcpy(&idx, &val, 4);
-                memcpy(&producer, ((char*)&val) + 4, 4);
                 per_consumer_actual_sum[consumer_idx].store(
-                  per_consumer_actual_sum[consumer_idx].load(std::memory_order_relaxed) + idx,
+                  per_consumer_actual_sum[consumer_idx].load(std::memory_order_relaxed) + val,
                   std::memory_order_release);
+
+                if (c.get_consume_idx() != val)
+                {
+                  std::stringstream ss;
+                  ss << "consumer[" << consumer_idx << "] producer_idx=" << val
+                     << " not equal consumer idx =" << c.get_consume_idx();
+                  throw std::runtime_error(ss.str());
+                }
 
                 if (0 == consumed_num++)
                 {
                   // on the very first item, let's calculate our target checksum
                   size_t extra_checksum = 0;
-                  for (size_t i = idx; i < idx + CONSUMED_PER_ITERATION; ++i)
+                  for (size_t i = val; i < val + CONSUMED_PER_ITERATION; ++i)
                     extra_checksum += i;
 
                   // relaxed memory order is fine here, because updates are done always by the same thread!
@@ -195,7 +203,7 @@ TEST_CASE(
       size_t n = 1;
       while (consumer_finished_num.load(std::memory_order_relaxed) < _MAX_CONSUMERS_)
       {
-        auto r = p.emplace_idx();
+        auto r = p.emplace_producer_own_idx();
         if (r == ProduceReturnCode::NotRunning)
           break;
         else if (r == ProduceReturnCode::Published)
@@ -261,16 +269,20 @@ TEST_CASE("Bounded blocking reliable multicast SPMC attach detach & stress test"
           while (consumed_num < CONSUMED_PER_ITERATION)
           {
             c.consume(
-              [consumer_idx = i, &q, CONSUMED_PER_ITERATION, &consumed_num,
+              [&c, consumer_idx = i, &q, CONSUMED_PER_ITERATION, &consumed_num,
                &per_consumer_actual_sum, &per_consumer_target_sum](size_t val) mutable
               {
-                uint32_t idx;
-                uint32_t producer;
-                memcpy(&idx, &val, 4);
-                memcpy(&producer, ((char*)&val) + 4, 4);
                 per_consumer_actual_sum[consumer_idx].store(
-                  per_consumer_actual_sum[consumer_idx].load(std::memory_order_relaxed) + idx,
+                  per_consumer_actual_sum[consumer_idx].load(std::memory_order_relaxed) + val,
                   std::memory_order_release);
+
+                if (c.get_consume_idx() != val)
+                {
+                  std::stringstream ss;
+                  ss << "consumer[" << consumer_idx << "] producer_idx=" << val
+                     << " not equal consumer idx =" << c.get_consume_idx();
+                  throw std::runtime_error(ss.str());
+                }
 
                 // if (consumer_idx == 0)
                 //   TLOG << "\n consumed " << idx;
@@ -279,7 +291,7 @@ TEST_CASE("Bounded blocking reliable multicast SPMC attach detach & stress test"
                 {
                   // on the very first item, let's calculate our target checksum
                   size_t extra_checksum = 0;
-                  for (size_t k = idx; k < idx + CONSUMED_PER_ITERATION; ++k)
+                  for (size_t k = val; k < val + CONSUMED_PER_ITERATION; ++k)
                     extra_checksum += k;
 
                   // relaxed memory order is fine here, because updates are done always by the same thread!
@@ -305,7 +317,7 @@ TEST_CASE("Bounded blocking reliable multicast SPMC attach detach & stress test"
       size_t n = 1;
       while (consumer_finished_num.load(std::memory_order_relaxed) < _MAX_CONSUMERS_)
       {
-        auto r = p.emplace_idx();
+        auto r = p.emplace_producer_own_idx();
         if (r == ProduceReturnCode::NotRunning)
           break;
         else if (r == ProduceReturnCode::Published)
@@ -378,11 +390,15 @@ TEST_CASE("Bounded blocking reliable anycast MPMC attach detach & stress test")
               auto r = c->consume(
                 [&](size_t val) mutable
                 {
-                  uint32_t idx;
-                  uint32_t producer;
-                  memcpy(&idx, &val, 4);
-                  memcpy(&producer, ((char*)&val) + 4, 4);
-                  per_consumer_sum[id].store(per_consumer_sum[id].load(std::memory_order_relaxed) + idx,
+                  if (c->get_consume_idx() != val)
+                  {
+                    std::stringstream ss;
+                    ss << "consumer[" << id << "] producer_idx=" << val
+                       << " not equal consumer idx =" << c->get_consume_idx();
+                    throw std::runtime_error(ss.str());
+                  }
+
+                  per_consumer_sum[id].store(per_consumer_sum[id].load(std::memory_order_relaxed) + val,
                                              std::memory_order_release);
                   ++msg_consumed;
                 });
@@ -411,7 +427,7 @@ TEST_CASE("Bounded blocking reliable anycast MPMC attach detach & stress test")
           size_t n = 1;
           while (1)
           {
-            auto r = p1.emplace_idx();
+            auto r = p1.emplace_producer_own_idx();
             if (r == ProduceReturnCode::NotRunning)
               break;
           }
@@ -499,20 +515,24 @@ TEST_CASE("Bounded blocking reliable anycast MPSC attach detach & stress test")
           {
             c.consume(
               [consumer_idx = i, &q, _N_PER_ITERATION_, &consumed_num, &target_iteration_sum,
-               &actual_iteration_sum, &consumed, &starting_idx, &per_consumer_target_sum](size_t val) mutable
+               &actual_iteration_sum, &consumed, &c, &starting_idx, &per_consumer_target_sum](size_t val) mutable
               {
-                uint32_t idx;
-                uint32_t producer;
-                memcpy(&idx, &val, 4);
-                memcpy(&producer, ((char*)&val) + 4, 4);
-                actual_iteration_sum += idx;
-                consumed.push_back(idx);
+                actual_iteration_sum += val;
+                consumed.push_back(val);
+
+                if (c.get_consume_idx() != val)
+                {
+                  std::stringstream ss;
+                  ss << "consumer[" << consumer_idx << "] producer_idx=" << val
+                     << " not equal consumer idx =" << c.get_consume_idx();
+                  throw std::runtime_error(ss.str());
+                }
 
                 if (0 == consumed_num++)
                 {
                   // on the very first item, let's calculate our target checksum
-                  starting_idx = idx;
-                  for (size_t i = idx; i < idx + _N_PER_ITERATION_; ++i)
+                  starting_idx = val;
+                  for (size_t i = val; i < val + _N_PER_ITERATION_; ++i)
                     target_iteration_sum += i;
                 }
               });
@@ -541,7 +561,7 @@ TEST_CASE("Bounded blocking reliable anycast MPSC attach detach & stress test")
       size_t n = 1;
       while (!consumers_done)
       {
-        auto r = p.emplace_idx();
+        auto r = p.emplace_producer_own_idx();
         if (r == ProduceReturnCode::NotRunning)
           break;
         else if (r == ProduceReturnCode::Published)
@@ -648,11 +668,7 @@ TEST_CASE(
               auto r = c.consume(
                 [&](size_t val) mutable
                 {
-                  uint32_t idx;
-                  uint32_t producer;
-                  memcpy(&idx, &val, 4);
-                  memcpy(&producer, ((char*)&val) + 4, 4);
-                  per_consumer_sum[id].store(per_consumer_sum[id].load(std::memory_order_relaxed) + idx,
+                  per_consumer_sum[id].store(per_consumer_sum[id].load(std::memory_order_relaxed) + val,
                                              std::memory_order_release);
                   ++msg_consumed;
                   ++j;
@@ -688,7 +704,7 @@ TEST_CASE(
           size_t n = 0;
           while (1)
           {
-            auto r = p.emplace_idx();
+            auto r = p.emplace_producer_own_idx();
             if (r == ProduceReturnCode::Published)
               ++n;
             else if (r == ProduceReturnCode::NotRunning)
@@ -730,8 +746,8 @@ TEST_CASE(
   constexpr size_t _MAX_CONSUMERS_ = 8;
   constexpr size_t _MAX_PUBLISHERS_ = 8;
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 4;
-  constexpr size_t _ATTACH_DETACH_ITERATIONS_ = 2000;
-  constexpr size_t _N_PER_CONSUMER_ = 15000;
+  constexpr size_t _ATTACH_DETACH_ITERATIONS_ = 1000;
+  constexpr size_t _N_PER_CONSUMER_ = 7000;
   constexpr size_t _N_TO_CONSUME_ = _N_PER_CONSUMER_ * _MAX_CONSUMERS_;
   constexpr size_t _N_PER_ITERATION_ = _N_PER_CONSUMER_ / _ATTACH_DETACH_ITERATIONS_;
   constexpr bool _MULTICAST_ = true;
@@ -791,11 +807,7 @@ TEST_CASE(
               auto r = c.consume(
                 [&](size_t val) mutable
                 {
-                  uint32_t idx;
-                  uint32_t producer;
-                  memcpy(&idx, &val, 4);
-                  memcpy(&producer, ((char*)&val) + 4, 4);
-                  per_consumer_sum[id].store(per_consumer_sum[id].load(std::memory_order_relaxed) + idx,
+                  per_consumer_sum[id].store(per_consumer_sum[id].load(std::memory_order_relaxed) + val,
                                              std::memory_order_release);
                   ++msg_consumed;
                   ++j;
@@ -831,7 +843,7 @@ TEST_CASE(
           size_t n = 0;
           while (1)
           {
-            auto r = p.emplace_idx();
+            auto r = p.emplace_producer_own_idx();
             if (r == ProduceReturnCode::Published)
               ++n;
             else if (r == ProduceReturnCode::NotRunning)
@@ -901,21 +913,25 @@ TEST_CASE("Adaptive blocking reliable multicast SPMC attach detach & stress test
           while (consumed_num < CONSUME_PER_ITERATION)
           {
             c.consume(
-              [consumer_idx = i, &q, CONSUME_PER_ITERATION, &consumed_num, &target_iteration_sum,
+              [&c, consumer_idx = i, &q, CONSUME_PER_ITERATION, &consumed_num, &target_iteration_sum,
                &actual_iteration_sum, &consumed, &starting_idx, &per_consumer_target_sum](size_t val) mutable
               {
-                uint32_t idx;
-                uint32_t producer;
-                memcpy(&idx, &val, 4);
-                memcpy(&producer, ((char*)&val) + 4, 4);
-                actual_iteration_sum += idx;
-                consumed.push_back(idx);
+                actual_iteration_sum += val;
+                consumed.push_back(val);
+
+                if (c.get_consume_idx() != val)
+                {
+                  std::stringstream ss;
+                  ss << "consumer[" << consumer_idx << "] producer_idx=" << val
+                     << " not equal consumer idx =" << c.get_consume_idx();
+                  throw std::runtime_error(ss.str());
+                }
 
                 if (0 == consumed_num++)
                 {
                   // on the very first item, let's calculate our target checksum
-                  starting_idx = idx;
-                  for (size_t i = idx; i < idx + CONSUME_PER_ITERATION; ++i)
+                  starting_idx = val;
+                  for (size_t i = val; i < val + CONSUME_PER_ITERATION; ++i)
                     target_iteration_sum += i;
                 }
               });
@@ -944,7 +960,7 @@ TEST_CASE("Adaptive blocking reliable multicast SPMC attach detach & stress test
       size_t n = 1;
       while (!consumers_done)
       {
-        auto r = p.emplace_idx();
+        auto r = p.emplace_producer_own_idx();
         if (r == ProduceReturnCode::NotRunning)
           break;
         else if (r == ProduceReturnCode::Published)

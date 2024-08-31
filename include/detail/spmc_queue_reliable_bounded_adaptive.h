@@ -307,7 +307,7 @@ public:
         // this->consumers_pending_dettach_.fetch_add(1, std::memory_order_release);
         //  technically even possible that while we unregistered it another
         //  thread, another consumer stole our slot legitimately and we just
-        //  removed it from the registery, effectively leaking it...
+        //  removed it from the registry, effectively leaking it...
         //  so unlocked the same consumer on multiple threads is really a bad
         //  idea
         return true;
