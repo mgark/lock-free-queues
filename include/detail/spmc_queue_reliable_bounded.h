@@ -69,7 +69,8 @@ private:
     alignas(64) ConsumerProgressArray consumers_progress_;
     alignas(64) ConsumerRegistryArray consumers_registry_;
 
-    // these variables change somewhat infrequently
+    // these variables change somewhat infrequently, it got type int to account for race
+    // conditions where producers would see first indication of a consumer joining before increment of this variable
     alignas(64) std::atomic<int> consumers_pending_attach_;
 
     ConsumerContext(Me& host) : consumer_idx_(0), host_(host), consumers_pending_attach_(0)
@@ -257,9 +258,8 @@ public:
       bool is_locked = locker.load(std::memory_order_acquire);
       if (!is_locked)
       {
-        if (locker.compare_exchange_strong(is_locked, true, std::memory_order_release, std::memory_order_relaxed))
+        if (locker.compare_exchange_strong(is_locked, true, std::memory_order_acq_rel, std::memory_order_relaxed))
         {
-
           bool producer_need_to_accept = true;
           if (!is_running())
           {
@@ -286,13 +286,17 @@ public:
           {
             this->consumer_ctx_.consumers_progress_.at(i).idx.store(CONSUMER_JOIN_REQUESTED,
                                                                     std::memory_order_release);
-            this->consumer_ctx_.consumers_pending_attach_.fetch_add(1, std::memory_order_release);
           }
 
           {
             Spinlock::scoped_lock autolock(this->slow_path_guard_);
             auto latest_max_consumer_id = this->next_max_consumer_id_.load(std::memory_order_relaxed);
             this->next_max_consumer_id_.store(std::max(i + 1, latest_max_consumer_id), std::memory_order_release);
+          }
+
+          if (producer_need_to_accept)
+          {
+            this->consumer_ctx_.consumers_pending_attach_.fetch_add(1, std::memory_order_release);
           }
 
           // let's wait for producer to consumer our positions from which we
@@ -347,20 +351,8 @@ public:
         //  idea
 
         Spinlock::scoped_lock autolock(this->slow_path_guard_);
-        // It shall be safe to update max consumer idx as the attach function would restore max consumer idx shall one appear right after.
-        auto new_max_consumer_id = _MAX_CONSUMER_N_ - 1;
-        do
-        {
-          if (this->consumer_ctx_.consumers_progress_.at(new_max_consumer_id).idx.load(std::memory_order_relaxed) ==
-              CONSUMER_IS_WELCOME)
-            --new_max_consumer_id;
-          else
-          {
-            break;
-          }
-        } while (next_max_consumer_id_ > 0 && new_max_consumer_id != std::numeric_limits<size_t>::max());
-
-        this->next_max_consumer_id_.store(new_max_consumer_id + 1, std::memory_order_release);
+        auto latest_max_consumer_id = this->next_max_consumer_id_.load(std::memory_order_relaxed);
+        this->next_max_consumer_id_.store(std::max(latest_max_consumer_id, consumer_id), std::memory_order_release);
         return true;
       }
       else
@@ -551,8 +543,9 @@ public:
 
       size_t min_next_producer_idx_local = original_idx;
       size_t min_next_consumer_idx_local = consumer_ctx_.get_next_idx();
-      auto next_max_consumer_id =
-        _MAX_CONSUMER_N_; // TODO: this->next_max_consumer_id_.load(std::memory_order_acquire);
+      // auto next_max_consumer_id = _MAX_CONSUMER_N_;
+      auto next_max_consumer_id = this->next_max_consumer_id_.load(std::memory_order_acquire);
+      // TODO: this->next_max_consumer_id_.load(std::memory_order_acquire);
       for (size_t i = 0; i < next_max_consumer_id; ++i)
       {
         size_t consumer_next_idx = try_accept_new_consumer(i, min_next_producer_idx_local);
@@ -566,6 +559,7 @@ public:
       // no active consumer check is a great safety guard to prevent producers keep overriding nodes
       // and racing with each other as it facilitates transitive happens
       // before relationship between multiple  producers as well!
+      // producers also don't need to track absolute version as simple binary state would be enough
       no_active_consumers = min_next_consumer_idx_local ==
         CONSUMER_IS_WELCOME; // TODO: fix this for synchronized consumers!
       slow_consumer = original_idx - min_next_consumer_idx_local >= this->n_;

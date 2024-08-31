@@ -36,6 +36,7 @@ Consumers don't need to track their index even, just check if a given slot got a
 # TODO
 
 - full clang support
+- try to find a solution to not loose messages when all consumers have detached and producer pushed a message just after that
 - byte queue with variable message length
 - ~right now consumers can attach and detach dynamically, but so shall be producers too!~
 - easy installation on target platforms
