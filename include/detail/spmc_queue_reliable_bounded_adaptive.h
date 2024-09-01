@@ -172,13 +172,17 @@ public:
           if (producer_need_to_accept)
           {
             this->consumers_progress_.at(i).idx.store(CONSUMER_JOIN_REQUESTED, std::memory_order_release);
-            this->consumers_pending_attach_.fetch_add(1, std::memory_order_release);
           }
 
           {
             Spinlock::scoped_lock autolock(this->slow_path_guard_);
             auto latest_max_consumer_id = this->max_consumer_id_.load(std::memory_order_relaxed);
             this->max_consumer_id_.store(std::max(i, latest_max_consumer_id), std::memory_order_release);
+          }
+
+          if (producer_need_to_accept)
+          {
+            this->consumers_pending_attach_.fetch_add(1, std::memory_order_release);
           }
 
           // let's wait for producer to consumer our positions from which we

@@ -40,9 +40,11 @@ class SPMCMulticastQueueReliableBounded
 public:
   using Base = SPMCMulticastQueueBase<T, SPMCMulticastQueueReliableBounded, _MAX_CONSUMER_N_,
                                       _MAX_PRODUCER_N_, _BATCH_NUM_, _MULTICAST_, Allocator, VersionType>;
+  using Base::_binary_version_;
   using Base::_reuse_single_bit_from_object_;
   using Base::_synchronized_consumer_;
   using Base::_synchronized_producer_;
+  using Base::_versionless_;
 
 private:
   using Me =
@@ -151,8 +153,8 @@ private:
       // for single producer relaxed ordering should be enough since this would be
       // called after first successful publishing already done by this producer which
       // would establish the right ordering with previous producer
-      size_t new_idx = producer_idx_.load(std::memory_order_relaxed);
-      producer_idx_.store(new_idx + 1, std::memory_order_relaxed);
+      size_t new_idx = producer_idx_.load(std::memory_order_acquire);
+      // producer_idx_.store(new_idx + 1, std::memory_order_relaxed);
       return new_idx;
     }
 
@@ -222,13 +224,13 @@ public:
 
   size_t get_producer_idx() const
   {
-    return producer_ctx_.producer_idx_.load(std::memory_order_relaxed);
+    return producer_ctx_.producer_idx_.load(std::memory_order_acquire);
   }
 
   // WARNING: shall it be relaxed really?
   size_t get_consumer_next_idx() const
   {
-    return consumer_ctx_.consumer_idx_.load(std::memory_order_relaxed);
+    return consumer_ctx_.consumer_idx_.load(std::memory_order_acquire);
   }
 
   template <class Consumer>
@@ -508,11 +510,17 @@ public:
   }
 
   template <class Producer>
-  void unlock_min_producer_idx(size_t original_idx, Producer& p) requires(_MAX_PRODUCER_N_ > 1)
+  void unlock_min_producer_idx(size_t original_idx, Producer& p) requires(_synchronized_producer_)
   {
     // this is required for producer to commit its min producer idx so that each producer can push items at
     // its own pace! the point to set idx to PRODUCER_JOINED is to not participate in calculating min producer idx!
     this->producer_ctx_.producer_progress_[p.producer_id_].idx.store(PRODUCER_JOINED, std::memory_order_release);
+  }
+
+  template <class Producer>
+  void unlock_min_producer_idx(size_t original_idx, Producer& p) requires(!_synchronized_producer_)
+  {
+    this->producer_ctx_.producer_idx_.store(original_idx + 1, std::memory_order_release);
   }
 
   template <class Producer, class... Args, bool blocking = Producer::blocking_v>
@@ -585,35 +593,17 @@ public:
     size_t idx = original_idx & this->idx_mask_;
     Node& node = this->nodes_[idx];
     version_type version;
+    if constexpr (!_versionless_)
     {
-
+      static_assert(_synchronized_producer_);
       if constexpr (_synchronized_consumer_)
       {
-        if constexpr (_synchronized_producer_)
-        {
-          // cannot estimate properly version as consumer can join / detach dynamically...
-          version = original_idx / this->size();
-        }
-        else
-        {
-          version = node.version_.load(std::memory_order_acquire);
-        }
-      }
-      else if constexpr (_synchronized_producer_)
-      {
-        version = ((original_idx / this->size()) & 1u) ? version_type{1u} : version_type{0};
+        // cannot estimate properly version as consumer can join / detach dynamically...
+        version = original_idx / this->size();
       }
       else
       {
-        if constexpr (_reuse_single_bit_from_object_)
-        {
-          const T& obj = reinterpret_cast<const T&>(node.storage_);
-          version = obj.read_version();
-        }
-        else
-        {
-          version = node.version_.load(std::memory_order_acquire);
-        }
+        version = ((original_idx / this->size()) & 1u) ? version_type{1u} : version_type{0};
       }
     }
 
@@ -626,27 +616,20 @@ public:
       }
     }
 
-    if constexpr (_reuse_single_bit_from_object_)
+    NodeAllocTraits::construct(this->alloc_, static_cast<T*>(storage), std::forward<Args>(args)...);
+    if constexpr (!_versionless_)
     {
-      T& obj = reinterpret_cast<T&>(node.storage_);
-      // newly constructed object must already have set the re-used bit to 0!
-      obj.store(std::forward<Args>(args)...);
-    }
-    else if constexpr (_synchronized_consumer_)
-    {
-      NodeAllocTraits::construct(this->alloc_, static_cast<T*>(storage), std::forward<Args>(args)...);
-      node.version_.store(1 + version, std::memory_order_release);
-    }
-    else
-    {
-      NodeAllocTraits::construct(this->alloc_, static_cast<T*>(storage), std::forward<Args>(args)...);
-      node.version_.store(version ^ version_type{1u}, std::memory_order_release);
+      if constexpr (_synchronized_consumer_)
+      {
+        node.version_.store(1 + version, std::memory_order_release);
+      }
+      else
+      {
+        node.version_.store(version ^ version_type{1u}, std::memory_order_release);
+      }
     }
 
-    if constexpr (_synchronized_producer_)
-    {
-      unlock_min_producer_idx(original_idx, producer);
-    }
+    unlock_min_producer_idx(original_idx, producer);
 
 #ifdef _TRACE_STATS_
     ++producer.stats().pub_num;
@@ -655,9 +638,29 @@ public:
     return ProduceReturnCode::Published;
   }
 
+  size_t calc_min_next_producer_idx() const
+  {
+    size_t min_next_producer_idx_local = get_producer_idx();
+    if constexpr (_synchronized_producer_)
+    {
+      auto next_max_producer_id = this->next_max_producer_id_.load(std::memory_order_acquire);
+      for (size_t i = 0; i < next_max_producer_id; ++i)
+      {
+        size_t min_next_producer_idx =
+          this->producer_ctx_.producer_progress_[i].idx.load(std::memory_order_acquire);
+        if (min_next_producer_idx < PRODUCER_JOINED)
+        {
+          min_next_producer_idx_local = std::min(min_next_producer_idx_local, min_next_producer_idx);
+        }
+      }
+    }
+
+    return min_next_producer_idx_local;
+  }
+
   template <class C, class F>
   ConsumeReturnCode consume_by_func(size_t idx, size_t& queue_idx, Node& node, auto version,
-                                    C& consumer, F&& f) requires(!_synchronized_consumer_)
+                                    C& consumer, F&& f) requires(!_versionless_ && _binary_version_)
   {
 
     if (consumer.previous_version_ ^ version)
@@ -687,7 +690,8 @@ public:
 
   template <class C, class F>
   ConsumeReturnCode consume_by_func(size_t idx, size_t& queue_idx, Node& node, version_type version,
-                                    version_type expected_version, C& consumer, F&& f) requires(_synchronized_consumer_)
+                                    version_type expected_version, C& consumer,
+                                    F&& f) requires(!_versionless_ and !_binary_version_)
   {
     if (expected_version == version)
     {
@@ -701,6 +705,57 @@ public:
     {
       return ConsumeReturnCode::NothingToConsume;
     }
+  }
+
+  template <class C, class F>
+  ConsumeReturnCode consume_by_func(size_t idx, size_t& queue_idx, Node& node, C& consumer,
+                                    F&& f) requires(_versionless_ and _synchronized_consumer_)
+  {
+    size_t producer_idx = consumer.get_min_next_cached_producer_idx();
+    if (producer_idx <= idx)
+    {
+      // let's try to pull the latest min producer idx
+      producer_idx = calc_min_next_producer_idx();
+      consumer.set_min_next_cached_producer_idx(producer_idx);
+      if (producer_idx <= idx)
+      {
+        return ConsumeReturnCode::NothingToConsume;
+      }
+    }
+
+    std::forward<F>(f)(node.storage_);
+    this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
+      NEXT_CONSUMER_IDX_NEEDED, std::memory_order_release);
+    consumer.consumer_next_idx_ = NEXT_CONSUMER_IDX_NEEDED;
+    return ConsumeReturnCode::Consumed;
+  }
+
+  template <class C, class F>
+  ConsumeReturnCode consume_by_func(size_t idx, size_t& queue_idx, Node& node, C& consumer,
+                                    F&& f) requires(_versionless_ and not _synchronized_consumer_)
+  {
+    size_t producer_idx = consumer.get_min_next_cached_producer_idx();
+    if (producer_idx <= idx)
+    {
+      // let's try to pull the latest min producer idx
+      producer_idx = calc_min_next_producer_idx();
+      consumer.set_min_next_cached_producer_idx(producer_idx);
+      if (producer_idx <= idx)
+      {
+        return ConsumeReturnCode::NothingToConsume;
+      }
+    }
+
+    std::forward<F>(f)(node.storage_);
+    ++consumer.consumer_next_idx_;
+    if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
+    {
+      this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
+        consumer.consumer_next_idx_, std::memory_order_release);
+      consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
+    }
+
+    return ConsumeReturnCode::Consumed;
   }
 
   template <class C>
@@ -717,9 +772,35 @@ public:
   }
 
   template <class C>
-  ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node, version_type version,
-                         C& consumer) requires(!_synchronized_consumer_)
+  const T* peek(Node& node, size_t idx, C& consumer) const requires(!_synchronized_consumer_)
   {
+    size_t producer_idx = consumer.get_min_next_cached_producer_idx();
+    if (producer_idx <= idx)
+    {
+      // let's try to pull the latest min producer idx
+      producer_idx = calc_min_next_producer_idx();
+      consumer.set_min_next_cached_producer_idx(producer_idx);
+      if (producer_idx <= idx)
+      {
+        return nullptr;
+      }
+    }
+
+    if (producer_idx <= idx)
+    {
+      return nullptr;
+    }
+    else
+    {
+      return reinterpret_cast<const T*>(node.storage_);
+    }
+  }
+
+  template <class C>
+  ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node, auto version,
+                         C& consumer) requires(!_versionless_ && _binary_version_)
+  {
+
     if (consumer.previous_version_ ^ version)
     {
       if (idx + 1u == this->n_)
@@ -727,6 +808,7 @@ public:
         // rollover
         consumer.previous_version_ = version;
       }
+
       ++consumer.consumer_next_idx_;
       if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
       {
@@ -734,6 +816,7 @@ public:
           consumer.consumer_next_idx_, std::memory_order_release);
         consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
       }
+
       return ConsumeReturnCode::Consumed;
     }
     else
@@ -744,7 +827,7 @@ public:
 
   template <class C>
   ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node, version_type version,
-                         version_type expected_version, C& consumer) requires(_synchronized_consumer_)
+                         version_type expected_version, C& consumer) requires(!_versionless_ and !_binary_version_)
   {
     if (expected_version == version)
     {
@@ -757,5 +840,54 @@ public:
     {
       return ConsumeReturnCode::NothingToConsume;
     }
+  }
+
+  template <class C>
+  ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node,
+                         C& consumer) requires(_versionless_ and _synchronized_consumer_)
+  {
+    size_t producer_idx = consumer.get_min_next_cached_producer_idx();
+    if (producer_idx <= idx)
+    {
+      // let's try to pull the latest min producer idx
+      producer_idx = calc_min_next_producer_idx();
+      consumer.set_min_next_cached_producer_idx(producer_idx);
+      if (producer_idx <= idx)
+      {
+        return ConsumeReturnCode::NothingToConsume;
+      }
+    }
+
+    this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
+      NEXT_CONSUMER_IDX_NEEDED, std::memory_order_release);
+    consumer.consumer_next_idx_ = NEXT_CONSUMER_IDX_NEEDED;
+    return ConsumeReturnCode::Consumed;
+  }
+
+  template <class C>
+  ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node,
+                         C& consumer) requires(_versionless_ and not _synchronized_consumer_)
+  {
+    size_t producer_idx = consumer.get_min_next_cached_producer_idx();
+    if (producer_idx <= idx)
+    {
+      // let's try to pull the latest min producer idx
+      producer_idx = calc_min_next_producer_idx();
+      consumer.set_min_next_cached_producer_idx(producer_idx);
+      if (producer_idx <= idx)
+      {
+        return ConsumeReturnCode::NothingToConsume;
+      }
+    }
+
+    ++consumer.consumer_next_idx_;
+    if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
+    {
+      this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
+        consumer.consumer_next_idx_, std::memory_order_release);
+      consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
+    }
+
+    return ConsumeReturnCode::Consumed;
   }
 };

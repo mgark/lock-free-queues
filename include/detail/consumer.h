@@ -42,6 +42,7 @@ protected:
   size_t consumer_id_;
   size_t next_checkout_point_idx_;
   size_t items_per_batch_;
+  mutable size_t min_next_producer_idx_;
   mutable size_t queue_idx_;
 #ifdef _ADDITIONAL_TRACE_
   typename Queue::ConsumerTicket original_ticket;
@@ -84,6 +85,8 @@ public:
     else
       return false;
   }
+  size_t get_min_next_cached_producer_idx() const { return min_next_producer_idx_; }
+  void set_min_next_cached_producer_idx(size_t val) const { min_next_producer_idx_ = val; }
 
   bool is_stopped() const noexcept { return this->q_->is_stopped(); }
 
@@ -131,6 +134,7 @@ protected:
       consumer_next_idx_ = ticket.consumer_next_idx;
       items_per_batch_ = ticket.items_per_batch;
       queue_idx_ = ticket.queue_idx;
+      min_next_producer_idx_ = 0; // this will cause for new joined consumer to re-calc its min_next_producer_idx_
       previous_version_ = ticket.previous_version; // it will be properly recalculated later on by consumers!
 
       if (std::numeric_limits<size_t>::max() != ticket.items_per_batch)
