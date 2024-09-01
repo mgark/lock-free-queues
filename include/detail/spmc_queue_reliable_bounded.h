@@ -542,7 +542,9 @@ public:
       no_free_slot = no_active_consumers || slow_consumer;
     }
 
-    while (no_free_slot || this->consumer_ctx_.consumers_pending_attach_.load(std::memory_order_acquire))
+    bool consumers_pending_attach =
+      this->consumer_ctx_.consumers_pending_attach_.load(std::memory_order_acquire);
+    while (no_free_slot || consumers_pending_attach)
     {
       if (!is_running())
       {
@@ -571,9 +573,7 @@ public:
       no_active_consumers = min_next_consumer_idx_local ==
         CONSUMER_IS_WELCOME; // TODO: fix this for synchronized consumers!
       slow_consumer = original_idx - min_next_consumer_idx_local >= this->n_;
-
       no_free_slot = (no_active_consumers || slow_consumer);
-
       if (no_active_consumers)
       {
         return ProduceReturnCode::NoConsumers;
@@ -588,6 +588,8 @@ public:
           return ProduceReturnCode::SlowConsumer;
         }
       }
+
+      consumers_pending_attach = this->consumer_ctx_.consumers_pending_attach_.load(std::memory_order_acquire);
     }
 
     size_t idx = original_idx & this->idx_mask_;

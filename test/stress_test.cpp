@@ -23,6 +23,7 @@ TEST_CASE(
   constexpr size_t ATTACH_DETACH_ITERATIONS = 20000;
   constexpr size_t CONSUMED_PER_ITERATION = N / ATTACH_DETACH_ITERATIONS / 100;
   using Queue = SPMCMulticastQueueReliableBounded<size_t, _MAX_CONSUMERS_>;
+  static_assert(Queue::_versionless_);
   Queue q(_PUBLISHER_QUEUE_SIZE);
 
   std::vector<std::thread> consumer_threads;
