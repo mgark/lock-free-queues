@@ -58,6 +58,8 @@ TEST_CASE(
                   std::stringstream ss;
                   ss << "consumer[" << consumer_idx << "] producer_idx=" << val
                      << " not equal consumer idx =" << c.get_consume_idx();
+                  TLOG << ss.str();
+                  TLOG.flush();
                   throw std::runtime_error(ss.str());
                 }
 

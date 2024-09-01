@@ -42,6 +42,7 @@ protected:
   size_t consumer_id_;
   size_t next_checkout_point_idx_;
   size_t items_per_batch_;
+  size_t min_next_producer_idx_;
   mutable size_t queue_idx_;
 #ifdef _ADDITIONAL_TRACE_
   typename Queue::ConsumerTicket original_ticket;
@@ -64,6 +65,9 @@ public:
     }
   }
   ~ConsumerBase() { detach(); }
+
+  size_t get_min_next_cached_producer_idx() const { return min_next_producer_idx_; }
+  void set_min_next_cached_producer_idx(size_t val) { min_next_producer_idx_ = val; }
 
   ConsumerAttachReturnCode attach(Queue& q) { return do_attach(std::to_address(&q)); }
 
@@ -131,6 +135,7 @@ protected:
       consumer_next_idx_ = ticket.consumer_next_idx;
       items_per_batch_ = ticket.items_per_batch;
       queue_idx_ = ticket.queue_idx;
+      min_next_producer_idx_ = 0;
       previous_version_ = ticket.previous_version; // it will be properly recalculated later on by consumers!
 
       if (std::numeric_limits<size_t>::max() != ticket.items_per_batch)

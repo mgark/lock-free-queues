@@ -114,6 +114,7 @@ TEST_CASE("SPSC stop / start test")
       sleep(1); /*wait until consumer calls consume function below*/
       q.stop();
     });
+  t.join();
   {
     auto cr = c.consume([&q](const Order& o) mutable { std::cout << o; });
     CHECK(ConsumeReturnCode::Stopped == cr);
