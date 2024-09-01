@@ -150,15 +150,15 @@ private:
       // for single producer relaxed ordering should be enough since this would be
       // called after first successful publishing already done by this producer which
       // would establish the right ordering with previous producer
-      size_t old_idx = producer_idx_.load(std::memory_order_relaxed);
-      size_t new_idx = old_idx + 1;
-      producer_progress_[p.producer_id_].idx.store(old_idx, std::memory_order_release);
-      producer_idx_.store(new_idx, std::memory_order_relaxed);
+      size_t old_idx = producer_idx_.load(std::memory_order_acquire);
+      // size_t new_idx = old_idx + 1;
+      //  producer_progress_[p.producer_id_].idx.store(old_idx, std::memory_order_release);
+      //  producer_idx_.store(new_idx, std::memory_order_relaxed);
       return old_idx;
     }
 
     template <class Producer>
-    size_t aquire_idx(Producer& p) requires(_MAX_PRODUCER_N_ > 1)
+    size_t aquire_idx(Producer& p) requires(_synchronized_producer_)
     {
 
       // let's lock in our producer next idx to the least possible idx so that
@@ -176,7 +176,7 @@ private:
     }
 
     template <class Producer>
-    size_t aquire_first_idx(Producer& p) requires(_MAX_PRODUCER_N_ == 1)
+    size_t aquire_first_idx(Producer& p) requires(!_synchronized_producer_)
     {
       // we use CAS here just in case producer has detached in one thread, but than shortly attached in another!
       size_t new_idx;
@@ -184,7 +184,7 @@ private:
       do
       {
         new_idx = old_idx + 1;
-        producer_progress_[p.producer_id_].idx.store(old_idx, std::memory_order_release);
+        // producer_progress_[p.producer_id_].idx.store(old_idx, std::memory_order_release);
       } while (!producer_idx_.compare_exchange_strong(old_idx, new_idx, std::memory_order_acq_rel,
                                                       std::memory_order_acquire));
       return old_idx;
@@ -224,13 +224,13 @@ public:
 
   size_t get_producer_idx() const
   {
-    return producer_ctx_.producer_idx_.load(std::memory_order_relaxed);
+    return producer_ctx_.producer_idx_.load(std::memory_order_acquire);
   }
 
   // WARNING: shall it be relaxed really?
   size_t get_consumer_next_idx() const
   {
-    return consumer_ctx_.consumer_idx_.load(std::memory_order_relaxed);
+    return consumer_ctx_.consumer_idx_.load(std::memory_order_acquire);
   }
 
   template <class Consumer>
@@ -504,11 +504,20 @@ public:
   }
 
   template <class Producer>
-  void unlock_min_producer_idx(size_t original_idx, Producer& p)
+  void unlock_min_producer_idx(size_t original_idx, Producer& p) requires(_synchronized_producer_)
   {
     // this is required for producer to commit its min producer idx so that each producer can push items at
     // its own pace! the point to set idx to PRODUCER_JOINED is to not participate in calculating min producer idx!
     this->producer_ctx_.producer_progress_[p.producer_id_].idx.store(PRODUCER_JOINED, std::memory_order_release);
+  }
+
+  template <class Producer>
+  void unlock_min_producer_idx(size_t original_idx, Producer& p) requires(!_synchronized_producer_)
+  {
+    // this is required for producer to commit its min producer idx so that each producer can push items at
+    // its own pace! the point to set idx to PRODUCER_JOINED is to not participate in calculating min producer idx!
+    // this->producer_ctx_.producer_progress_[p.producer_id_].idx.store(PRODUCER_JOINED, std::memory_order_release);
+    this->producer_ctx_.producer_idx_.store(original_idx + 1, std::memory_order_release);
   }
 
   template <class Producer, class... Args, bool blocking = Producer::blocking_v>
@@ -529,17 +538,17 @@ public:
     {
       no_free_slot = no_active_consumers || slow_consumer;
     }
-
-    while (no_free_slot || this->consumer_ctx_.consumers_pending_attach_.load(std::memory_order_acquire))
+    bool consumers_pending_attach =
+      this->consumer_ctx_.consumers_pending_attach_.load(std::memory_order_acquire);
+    while (no_free_slot || consumers_pending_attach)
     {
       if (!is_running())
       {
         return ProduceReturnCode::NotRunning;
       }
 
-      size_t min_next_producer_idx_local = original_idx;
       size_t min_next_consumer_idx_local = consumer_ctx_.get_next_idx();
-      // auto next_max_consumer_id = _MAX_CONSUMER_N_;
+      size_t min_next_producer_idx_local = original_idx;
       auto next_max_consumer_id = this->next_max_consumer_id_.load(std::memory_order_acquire);
       // TODO: this->next_max_consumer_id_.load(std::memory_order_acquire);
       for (size_t i = 0; i < next_max_consumer_id; ++i)
@@ -559,9 +568,7 @@ public:
       no_active_consumers = min_next_consumer_idx_local ==
         CONSUMER_IS_WELCOME; // TODO: fix this for synchronized consumers!
       slow_consumer = original_idx - min_next_consumer_idx_local >= this->n_;
-
       no_free_slot = (no_active_consumers || slow_consumer);
-
       if (no_active_consumers)
       {
         return ProduceReturnCode::NoConsumers;
@@ -576,6 +583,8 @@ public:
           return ProduceReturnCode::SlowConsumer;
         }
       }
+
+      consumers_pending_attach = this->consumer_ctx_.consumers_pending_attach_.load(std::memory_order_acquire);
     }
 
     size_t idx = original_idx & this->idx_mask_;
@@ -602,14 +611,17 @@ public:
   size_t calc_min_next_producer_idx() const
   {
     size_t min_next_producer_idx_local = get_producer_idx();
-    auto next_max_producer_id = this->next_max_producer_id_.load(std::memory_order_acquire);
-    for (size_t i = 0; i < next_max_producer_id; ++i)
+    if constexpr (_synchronized_producer_)
     {
-      size_t min_next_producer_idx =
-        this->producer_ctx_.producer_progress_[i].idx.load(std::memory_order_acquire);
-      if (min_next_producer_idx < PRODUCER_JOINED)
+      auto next_max_producer_id = this->next_max_producer_id_.load(std::memory_order_acquire);
+      for (size_t i = 0; i < next_max_producer_id; ++i)
       {
-        min_next_producer_idx_local = std::min(min_next_producer_idx_local, min_next_producer_idx);
+        size_t min_next_producer_idx =
+          this->producer_ctx_.producer_progress_[i].idx.load(std::memory_order_acquire);
+        if (min_next_producer_idx < PRODUCER_JOINED)
+        {
+          min_next_producer_idx_local = std::min(min_next_producer_idx_local, min_next_producer_idx);
+        }
       }
     }
 
@@ -671,6 +683,17 @@ public:
   const T* peek(Node& node, size_t idx, C& consumer) const requires(!_synchronized_consumer_)
   {
     size_t producer_idx = consumer.get_min_next_cached_producer_idx();
+    if (producer_idx <= idx)
+    {
+      // let's try to pull the latest min producer idx
+      producer_idx = calc_min_next_producer_idx();
+      consumer.set_min_next_cached_producer_idx(producer_idx);
+      if (producer_idx <= idx)
+      {
+        return nullptr;
+      }
+    }
+
     if (producer_idx <= idx)
     {
       return nullptr;
