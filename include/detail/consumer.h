@@ -204,7 +204,7 @@ public:
     return *r;
   }
 
-  pointer operator->() const
+  pointer operator->()
   {
     auto* r = c_->peek();
     if (r == nullptr)
@@ -278,29 +278,18 @@ struct ConsumerBlocking : ConsumerBase<Queue>
   using const_iterator = const_consumer_iterator<ConsumerBlocking<Queue>>;
   static constexpr bool blocking_v = true;
 
-  const_iterator cbegin() requires requires
-  {
-    requires !Queue::_synchronized_consumer_;
-    requires std::input_iterator<const_iterator>;
-  }
+  const_iterator cbegin() requires requires { requires std::input_iterator<const_iterator>; }
   {
     return const_iterator(this);
   }
-  const_iterator cend() requires requires
-  {
-    requires !Queue::_synchronized_consumer_;
-    requires std::input_iterator<const_iterator>;
-  }
+  const_iterator cend() requires requires { requires std::input_iterator<const_iterator>; }
   {
     return const_iterator();
   }
 
   size_t get_consume_idx() const { return this->consumer_next_idx_; }
 
-  const T* peek() const requires(!Queue::_synchronized_consumer_)
-  {
-    return this->q_->peek_blocking(this->queue_idx_, *this);
-  }
+  const T* peek() { return this->q_->peek_blocking(this->queue_idx_, *this); }
 
   template <class F>
   ConsumeReturnCode consume(F&& f) requires(std::is_void_v<decltype((std::forward<F>(f)(std::declval<T>()), void()))>)
@@ -319,20 +308,21 @@ struct ConsumerBlocking : ConsumerBase<Queue>
   {
     alignas(T) std::byte raw[sizeof(T)];
     auto ret_code = this->q_->consume_raw_blocking(this->queue_idx_, raw, *this);
-    if (ConsumeReturnCode::Consumed == ret_code)
+    switch (ret_code)
     {
+    case ConsumeReturnCode::Consumed:
       return *std::launder(reinterpret_cast<T*>(raw));
-    }
-    else if (ConsumeReturnCode::Stopped == ret_code)
-    {
+    case ConsumeReturnCode::Stopped:
       throw QueueStoppedExp();
-    }
-    else if (ConsumeReturnCode::SlowConsumer == ret_code)
-    {
+    case ConsumeReturnCode::SlowConsumer:
       throw SlowConsumerExp();
+    case ConsumeReturnCode::NothingToConsume:
+    {
+    }
     }
 
-    std::terminate();
+    assert(false);
+    throw std::runtime_error("blocking consume cannot return NothingToConsume");
   }
 
   ConsumeReturnCode consume_raw(void* dst) requires std::is_trivially_copyable_v<T>
@@ -351,32 +341,17 @@ struct ConsumerNonBlocking : ConsumerBase<Queue>
   using const_iterator =
     const_consumer_iterator<ConsumerNonBlocking<Queue>>; // typename ConsumerBase<Queue>::template const_iterator<ConsumerNonBlocking<Queue>>;
 
-  const_iterator cbegin() requires requires
-  {
-    requires(!Queue::_synchronized_consumer_);
-    requires std::input_iterator<const_iterator>;
-  }
+  const_iterator cbegin() requires requires { requires std::input_iterator<const_iterator>; }
   {
     return const_iterator(this);
   }
 
-  const_iterator cend() requires requires
-  {
-    requires(!Queue::_synchronized_consumer_);
-    requires std::input_iterator<const_iterator>;
-  }
+  const_iterator cend() requires requires { requires std::input_iterator<const_iterator>; }
   {
     return const_iterator();
   }
 
-  /*
-  TODO: technically it is possible to consider peeking elements from synchronized consumers,
-  but it may be costly and the main question which element shall we peek(last published, next consumed?)
-  */
-  const T* peek() const requires(!Queue::_synchronized_consumer_)
-  {
-    return this->q_->peek_non_blocking(this->queue_idx_, *this);
-  }
+  const T* peek() { return this->q_->peek_non_blocking(this->queue_idx_, *this); }
 
   template <class F>
   ConsumeReturnCode consume(F&& f) requires(std::is_void_v<decltype((std::forward<F>(f)(std::declval<T>()), void()))>)

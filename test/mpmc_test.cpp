@@ -298,4 +298,49 @@ TEST_CASE("Synchronized Consumer and Producer Blocking MPMC functional test")
   CHECK(ConsumeReturnCode::Consumed == c1.consume([](const Order& o) { CHECK(o.id == 6u); }));
 }
 
+TEST_CASE("MPMC functional test - Blocking Peek and Skip")
+{
+  using MsgType = uint32_t;
+  using Queue = SPMCMulticastQueueReliableBounded<MsgType, 2, 2>;
+
+  Queue q(8);
+
+  constexpr bool blocking = true;
+  ConsumerBlocking<Queue> c1;
+  ConsumerBlocking<Queue> c2;
+  ProducerBlocking<Queue> p(q);
+  CHECK(ConsumerAttachReturnCode::Attached == c1.attach(q));
+  CHECK(ConsumerAttachReturnCode::Attached == c2.attach(q));
+  q.start();
+
+  {
+    auto r = p.emplace(1u);
+    CHECK(ProduceReturnCode::Published == r);
+  }
+
+  {
+    const MsgType* val;
+    val = c1.peek();
+    CHECK(*val == 1u);
+    c1.skip();
+    val = c2.peek();
+    CHECK(*val == 1u);
+    c2.skip();
+  }
+
+  {
+    auto r = p.emplace(2u);
+    CHECK(ProduceReturnCode::Published == r);
+  }
+
+  {
+    const MsgType* val;
+    val = c1.peek();
+    CHECK(*val == 2u);
+    c1.skip();
+    val = c2.peek();
+    CHECK(*val == 2u);
+    c2.skip();
+  }
+}
 int main(int argc, char** argv) { return Catch::Session().run(argc, argv); }

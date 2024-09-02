@@ -368,10 +368,18 @@ public:
   }
 
   template <class C>
-  const T* peek_blocking(size_t queue_idx, C& consumer) const requires(!_synchronized_consumer_)
+  const T* peek_blocking(size_t queue_idx, C& consumer)
   {
-    size_t idx = consumer.consumer_next_idx_ & consumer.idx_mask_;
+    size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
+    size_t idx = original_idx & consumer.idx_mask_;
     Node& node = this->nodes_[idx];
+    size_t expected_version;
+    if constexpr (_synchronized_consumer_)
+    {
+      idx = original_idx;
+      expected_version = 1 + (idx / this->capacity());
+    }
+
     bool running = false;
     const T* r;
     do
@@ -383,7 +391,14 @@ public:
       else
       {
         VersionType version = node.version_.load(std::memory_order_acquire);
-        r = peek(queue_idx, node, version, consumer);
+        if constexpr (_synchronized_consumer_)
+        {
+          r = peek(queue_idx, node, version, expected_version, consumer);
+        }
+        else
+        {
+          r = peek(queue_idx, idx, node, version, consumer);
+        }
       }
       if (r)
       {
@@ -395,19 +410,39 @@ public:
   }
 
   template <class C>
-  const T* peek_non_blocking(size_t& queue_idx, C& consumer) const requires(!_synchronized_consumer_)
+  const T* peek_non_blocking(size_t& queue_idx, C& consumer) requires(!_synchronized_consumer_)
   {
+    size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
     size_t idx = consumer.consumer_next_idx_ & consumer.idx_mask_;
     Node& node = this->nodes_[idx];
+
+    size_t expected_version;
+    if constexpr (_synchronized_consumer_)
+    {
+      idx = original_idx;
+      expected_version = 1 + (idx / this->capacity());
+    }
+
+    const T* r;
+    bool running = false;
     if constexpr (_versionless_)
     {
-      return peek(queue_idx, node, consumer.consumer_next_idx_, consumer);
+      r = peek(queue_idx, node, consumer.consumer_next_idx_, consumer);
     }
     else
     {
       VersionType version = node.version_.load(std::memory_order_acquire);
-      return peek(queue_idx, node, version, consumer);
+      if constexpr (_synchronized_consumer_)
+      {
+        r = peek(queue_idx, node, version, expected_version, consumer);
+      }
+      else
+      {
+        r = peek(queue_idx, idx, node, version, consumer);
+      }
     }
+
+    return r;
   }
 
   template <class C>
@@ -513,16 +548,21 @@ public:
   }
 
   template <class C>
-  const T* peek(size_t& queue_idx, Node& node, auto version, C& consumer) const
-    requires(!_synchronized_consumer_)
+  const T* peek(size_t& queue_idx, size_t idx, Node& node, auto version, C& consumer) requires(!_synchronized_consumer_)
   {
-    return static_cast<const Derived*>(this)->peek(node, version, consumer);
+    return static_cast<Derived*>(this)->peek(idx, node, version, consumer);
   }
 
   template <class C>
-  const T* peek(size_t& queue_idx, Node& node, size_t original_idx, C& consumer) const
-    requires(!_synchronized_consumer_)
+  const T* peek(size_t& queue_idx, Node& node, auto version, auto expected_version,
+                C& consumer) requires(_synchronized_consumer_)
   {
-    return static_cast<const Derived*>(this)->peek(node, original_idx, consumer);
+    return static_cast<Derived*>(this)->peek(node, version, expected_version, consumer);
+  }
+
+  template <class C>
+  const T* peek(size_t& queue_idx, Node& node, size_t original_idx, C& consumer) requires(!_synchronized_consumer_)
+  {
+    return static_cast<Derived*>(this)->peek(node, original_idx, consumer);
   }
 };

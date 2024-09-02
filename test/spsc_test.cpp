@@ -39,18 +39,25 @@ TEST_CASE("SPSC basic functional test - version based queue")
   }
 
   {
-    auto r = c.consume([&q](const Order& o) mutable { CHECK(o.id == 1u); });
-    CHECK(ConsumeReturnCode::Consumed == r);
+    auto r = c.consume();
+    CHECK(r.id == 1u);
+  }
+
+  {
+    auto r = p.emplace(3u, 1u, 100.0, 'A');
+    CHECK(ProduceReturnCode::Published == r);
+  }
+  {
+    auto r = c.consume();
+    CHECK(r.id == 3u);
   }
 }
 
-TEST_CASE("SPSC basic functional test - bit-reuse based queue")
+TEST_CASE("SPSC basic functional test - wrap around the queue")
 {
-  using MsgType = integral_msb_always_0<uint32_t>;
+  using MsgType = uint32_t;
   using Queue = SPMCMulticastQueueReliableBounded<MsgType, 1, 1, 2>;
   Queue q(2);
-
-  static_assert(msb_always_0<MsgType>, "asdf");
 
   ConsumerNonBlocking<Queue> c(q);
   ProducerNonBlocking<Queue> p(q);
@@ -70,7 +77,7 @@ TEST_CASE("SPSC basic functional test - bit-reuse based queue")
   }
 
   {
-    auto r = c.consume([&q](const MsgType& o) mutable { CHECK(o == MsgType::type{1u}); });
+    auto r = c.consume([&q](const MsgType& o) mutable { CHECK(o == MsgType{1u}); });
     CHECK(ConsumeReturnCode::Consumed == r);
   }
   {
@@ -78,11 +85,11 @@ TEST_CASE("SPSC basic functional test - bit-reuse based queue")
     CHECK(ProduceReturnCode::Published == r);
   }
   {
-    auto r = c.consume([&q](const MsgType& o) mutable { CHECK(o == MsgType::type{2u}); });
+    auto r = c.consume([&q](const MsgType& o) mutable { CHECK(o == MsgType{2u}); });
     CHECK(ConsumeReturnCode::Consumed == r);
   }
   {
-    auto r = c.consume([&q](const MsgType& o) mutable { CHECK(o == MsgType::type{4u}); });
+    auto r = c.consume([&q](const MsgType& o) mutable { CHECK(o == MsgType{4u}); });
     CHECK(ConsumeReturnCode::Consumed == r);
   }
 }

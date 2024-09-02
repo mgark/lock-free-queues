@@ -15,7 +15,6 @@
  */
 
 #pragma once
-
 #include "detail/common.h"
 #include "detail/producer.h"
 #include "detail/single_bit_reuse.h"
@@ -61,7 +60,6 @@ private:
     struct alignas(64) ConsumerProgress
     {
       std::atomic<size_t> idx;
-      std::atomic<size_t> queue_idx;
       std::atomic<VersionType> previous_version;
     };
 
@@ -536,11 +534,8 @@ public:
       min_next_consumer_idx == CONSUMER_IS_WELCOME; // TODO: fix for synchronized consumers!
 
     bool no_free_slot;
-    bool slow_consumer =
-      min_next_consumer_idx > original_idx || (original_idx - min_next_consumer_idx >= this->n_);
-    {
-      no_free_slot = no_active_consumers || slow_consumer;
-    }
+    bool slow_consumer = (original_idx - min_next_consumer_idx >= this->n_);
+    no_free_slot = no_active_consumers || slow_consumer;
 
     bool consumers_pending_attach =
       this->consumer_ctx_.consumers_pending_attach_.load(std::memory_order_acquire);
@@ -761,9 +756,29 @@ public:
   }
 
   template <class C>
-  const T* peek(Node& node, auto version, C& consumer) const requires(!_synchronized_consumer_)
+  const T* peek(size_t idx, Node& node, auto version, C& consumer) requires(!_versionless_ and _binary_version_)
   {
     if (consumer.previous_version_ ^ version)
+    {
+      if (idx + 1u == this->n_)
+      { // need to
+        // rollover
+        consumer.previous_version_ = version;
+      }
+
+      return reinterpret_cast<const T*>(node.storage_);
+    }
+    else
+    {
+      return nullptr;
+    }
+  }
+
+  template <class C>
+  const T* peek(Node& node, auto version, auto expected_version,
+                C& consumer) requires(!_versionless_ and !_binary_version_)
+  {
+    if (expected_version == version)
     {
       return reinterpret_cast<const T*>(node.storage_);
     }
@@ -774,7 +789,7 @@ public:
   }
 
   template <class C>
-  const T* peek(Node& node, size_t idx, C& consumer) const requires(!_synchronized_consumer_)
+  const T* peek(Node& node, size_t idx, C& consumer) requires(_versionless_)
   {
     size_t producer_idx = consumer.get_min_next_cached_producer_idx();
     if (producer_idx <= idx)
@@ -788,78 +803,28 @@ public:
       }
     }
 
-    if (producer_idx <= idx)
-    {
-      return nullptr;
-    }
-    else
-    {
-      return reinterpret_cast<const T*>(node.storage_);
-    }
+    return reinterpret_cast<const T*>(node.storage_);
   }
 
   template <class C>
   ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node, auto version,
                          C& consumer) requires(!_versionless_ && _binary_version_)
   {
-
-    if (consumer.previous_version_ ^ version)
+    ++consumer.consumer_next_idx_;
+    if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
     {
-      if (idx + 1u == this->n_)
-      { // need to
-        // rollover
-        consumer.previous_version_ = version;
-      }
-
-      ++consumer.consumer_next_idx_;
-      if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
-      {
-        this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
-          consumer.consumer_next_idx_, std::memory_order_release);
-        consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
-      }
-
-      return ConsumeReturnCode::Consumed;
+      this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
+        consumer.consumer_next_idx_, std::memory_order_release);
+      consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
     }
-    else
-    {
-      return ConsumeReturnCode::NothingToConsume;
-    }
+
+    return ConsumeReturnCode::Consumed;
   }
 
   template <class C>
   ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node, version_type version,
                          version_type expected_version, C& consumer) requires(!_versionless_ and !_binary_version_)
   {
-    if (expected_version == version)
-    {
-      this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
-        NEXT_CONSUMER_IDX_NEEDED, std::memory_order_release);
-      consumer.consumer_next_idx_ = NEXT_CONSUMER_IDX_NEEDED;
-      return ConsumeReturnCode::Consumed;
-    }
-    else
-    {
-      return ConsumeReturnCode::NothingToConsume;
-    }
-  }
-
-  template <class C>
-  ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node,
-                         C& consumer) requires(_versionless_ and _synchronized_consumer_)
-  {
-    size_t producer_idx = consumer.get_min_next_cached_producer_idx();
-    if (producer_idx <= idx)
-    {
-      // let's try to pull the latest min producer idx
-      producer_idx = calc_min_next_producer_idx();
-      consumer.set_min_next_cached_producer_idx(producer_idx);
-      if (producer_idx <= idx)
-      {
-        return ConsumeReturnCode::NothingToConsume;
-      }
-    }
-
     this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
       NEXT_CONSUMER_IDX_NEEDED, std::memory_order_release);
     consumer.consumer_next_idx_ = NEXT_CONSUMER_IDX_NEEDED;
@@ -868,19 +833,19 @@ public:
 
   template <class C>
   ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node,
+                         C& consumer) requires(_versionless_ and _synchronized_consumer_)
+  {
+    this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
+      NEXT_CONSUMER_IDX_NEEDED, std::memory_order_release);
+    consumer.consumer_next_idx_ = NEXT_CONSUMER_IDX_NEEDED;
+    return ConsumeReturnCode::Consumed;
+  }
+
+  // TODO: need to consider if skip shall return anything at all!
+  template <class C>
+  ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node,
                          C& consumer) requires(_versionless_ and not _synchronized_consumer_)
   {
-    size_t producer_idx = consumer.get_min_next_cached_producer_idx();
-    if (producer_idx <= idx)
-    {
-      // let's try to pull the latest min producer idx
-      producer_idx = calc_min_next_producer_idx();
-      consumer.set_min_next_cached_producer_idx(producer_idx);
-      if (producer_idx <= idx)
-      {
-        return ConsumeReturnCode::NothingToConsume;
-      }
-    }
 
     ++consumer.consumer_next_idx_;
     if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
