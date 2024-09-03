@@ -25,6 +25,7 @@
 #include <catch2/benchmark/detail/catch_benchmark_stats.hpp>
 #include <catch2/catch_version.hpp>
 #include <cstdint>
+#include <emmintrin.h>
 #include <limits>
 #include <sys/types.h>
 #include <unistd.h>
@@ -148,12 +149,7 @@ private:
     template <class Producer>
     size_t aquire_idx(Producer& p) requires(_MAX_PRODUCER_N_ == 1)
     {
-      // for single producer relaxed ordering should be enough since this would be
-      // called after first successful publishing already done by this producer which
-      // would establish the right ordering with previous producer
-      size_t new_idx = producer_idx_.load(std::memory_order_acquire);
-      // producer_idx_.store(new_idx + 1, std::memory_order_relaxed);
-      return new_idx;
+      return producer_idx_.load(std::memory_order_acquire);
     }
 
     template <class Producer>
@@ -164,6 +160,7 @@ private:
       // producer would not overrun us
       size_t idx = producer_idx_.load(std::memory_order_acquire);
       producer_progress_[p.producer_id_].idx.store(idx, std::memory_order_release);
+
       size_t last_idx = producer_idx_.fetch_add(1, std::memory_order_acq_rel);
       if (idx < last_idx)
       {
@@ -550,7 +547,6 @@ public:
       size_t min_next_consumer_idx_local = consumer_ctx_.get_next_idx();
       // auto next_max_consumer_id = _MAX_CONSUMER_N_;
       auto next_max_consumer_id = this->next_max_consumer_id_.load(std::memory_order_acquire);
-      // TODO: this->next_max_consumer_id_.load(std::memory_order_acquire);
       for (size_t i = 0; i < next_max_consumer_id; ++i)
       {
         size_t consumer_next_idx = try_accept_new_consumer(i, min_next_producer_idx_local);
@@ -569,9 +565,13 @@ public:
         CONSUMER_IS_WELCOME; // TODO: fix this for synchronized consumers!
       slow_consumer = original_idx - min_next_consumer_idx_local >= this->n_;
       no_free_slot = (no_active_consumers || slow_consumer);
-      if (no_active_consumers)
+
+      if constexpr (!blocking)
       {
-        return ProduceReturnCode::NoConsumers;
+        if (no_active_consumers)
+        {
+          return ProduceReturnCode::NoConsumers;
+        }
       }
 
       assert(original_idx >= min_next_consumer_idx_local);
@@ -585,6 +585,10 @@ public:
       }
 
       consumers_pending_attach = this->consumer_ctx_.consumers_pending_attach_.load(std::memory_order_acquire);
+      if (no_free_slot)
+      {
+        //_mm_pause();
+      }
     }
 
     size_t idx = original_idx & this->idx_mask_;

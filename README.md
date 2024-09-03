@@ -25,7 +25,7 @@ Consumers don't need to track their index even, just check if a given slot got a
 - lock-free / wait-free. There is only one tiny usage of spin-locks on the slow path
 - dynamic consumers attach / detach
 - single producer / consumer interface for all kinds of queues
-- Synchronized mutti-publishers supported
+- Synchronized multi-publishers supported
 - it is pretty pretty fast.
 - multiple compile-time tweaks
 - supports reading data through input iterators
@@ -37,6 +37,7 @@ Consumers don't need to track their index even, just check if a given slot got a
 
 - full clang support
 - try to find a solution to not loose messages when all consumers have detached and producer pushed a message just after that
+- investigate why big object throughput and MPMC latency is higher than expected
 - byte queue with variable message length
 - ~right now consumers can attach and detach dynamically, but so shall be producers too!~
 - easy installation on target platforms

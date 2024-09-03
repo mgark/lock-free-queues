@@ -21,6 +21,7 @@
 #include "spin_lock.h"
 #include <atomic>
 #include <cstdint>
+#include <emmintrin.h>
 #include <memory>
 #include <string>
 #include <type_traits>
@@ -58,8 +59,8 @@ public:
 protected:
   struct NodeWithVersion
   {
-    std::atomic<VersionType> version_;
     alignas(T) std::byte storage_[sizeof(T)];
+    std::atomic<VersionType> version_;
   };
 
   struct NodeWithoutVersion
@@ -300,6 +301,10 @@ public:
 
       if (r == ConsumeReturnCode::Consumed)
         return r;
+      else
+      {
+        // _mm_pause();
+      }
 
       state = this->state_.load(std::memory_order_acquire);
     } while (state == QueueState::Running && r == ConsumeReturnCode::NothingToConsume);
@@ -404,6 +409,11 @@ public:
       {
         return r;
       }
+      else
+      {
+        //_mm_pause();
+      }
+
       running = this->is_running();
     } while (running);
     return nullptr;
