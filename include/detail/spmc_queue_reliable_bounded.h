@@ -693,11 +693,12 @@ public:
       if constexpr (_synchronized_consumer_)
       {
         // cannot estimate properly version as consumer can join / detach dynamically...
-        version = original_idx / this->size();
+        version = div_by_power_of_two(original_idx, this->power_of_two_idx_);
       }
       else
       {
-        version = ((original_idx / this->size()) & 1u) ? version_type{1u} : version_type{0};
+        version = ((div_by_power_of_two(original_idx, this->power_of_two_idx_)) & 1u) ? version_type{1u}
+                                                                                      : version_type{0};
       }
     }
 

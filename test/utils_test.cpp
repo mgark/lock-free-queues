@@ -63,5 +63,14 @@ TEST_CASE("Single 1 bit bit masks test - int")
   CHECK(int_masks[31] == 0b00000000000000000000000000000001);
 }
 
+TEST_CASE("fast div test")
+{
+  CHECK(0 == (size_t)log2(1));
+  CHECK(1 == (size_t)log2(2));
+  CHECK(4 == (size_t)log2(16));
+
+  CHECK(50 == div_by_power_of_two(100, log2(2)));
+  CHECK(25 == div_by_power_of_two(100, log2(4)));
+}
 static_assert(std::atomic<integral_msb_always_0<size_t>>::is_always_lock_free);
 int main(int argc, char** argv) { return Catch::Session().run(argc, argv); }

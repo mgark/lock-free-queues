@@ -121,6 +121,35 @@ constexpr auto calc_power_of_two()
 
 constexpr inline std::array<size_t, 64> POWER_OF_TWO = calc_power_of_two<64>();
 
+template <size_t devisor>
+size_t fast_div(size_t dividend)
+{
+  return dividend / devisor;
+}
+
+template <const auto& A, class = std::make_index_sequence<std::tuple_size<std::decay_t<decltype(A)>>::value>>
+struct as_sequence;
+
+template <const auto& A, std::size_t... II>
+struct as_sequence<A, std::index_sequence<II...>>
+{
+  using type = std::integer_sequence<typename std::decay_t<decltype(A)>::value_type, A[II]...>;
+};
+
+template <size_t... I>
+consteval auto do_impl(std::index_sequence<I...>)
+{
+  return std::array<size_t (*)(size_t dividend), 64>{fast_div<I>...};
+}
+
+consteval auto create_power_of_two_dividers() { return do_impl(as_sequence<POWER_OF_TWO>::type()); }
+constexpr std::array<size_t (*)(size_t dividend), 64> DIV_BY_POWER_OF_TWO = create_power_of_two_dividers();
+
+size_t div_by_power_of_two(size_t dividend, size_t devisor_idx)
+{
+  return DIV_BY_POWER_OF_TWO[devisor_idx](dividend);
+}
+
 #define _DISABLE_UNRELIABLE_MULTICAST_TEST_
 //#define _DISABLE_ADAPTIVE_QUEUE_TEST_
 //#define _TRACE_STATS_

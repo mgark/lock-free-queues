@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "detail/common.h"
 #include <atomic>
 #include <benchmark/benchmark.h>
 #include <emmintrin.h>
@@ -49,6 +50,17 @@ static void size_t_div_constant(benchmark::State& state)
   }
 }
 
+static void size_t_div_new_val_optimized(benchmark::State& state)
+{
+  size_t val = 123123123;
+  volatile size_t res = 512;
+  size_t devisor_idx = log2(8);
+  for (auto _ : state)
+  {
+    res = div_by_power_of_two(val, devisor_idx);
+    ++val;
+  }
+}
 static void fetch_add_latency(benchmark::State& state)
 {
   static std::atomic_size_t counter{};
@@ -70,6 +82,7 @@ static void cas_latency(benchmark::State& state)
 BENCHMARK(cpu_pause_latency)->Iterations(100000);
 BENCHMARK(size_t_div_new_val)->Iterations(100000);
 BENCHMARK(size_t_div_constant)->Iterations(100000);
+BENCHMARK(size_t_div_new_val_optimized)->Iterations(100000);
 BENCHMARK(fetch_add_latency)->Threads(2)->Iterations(1000000);
 BENCHMARK(cas_latency)->Threads(2)->Iterations(1000000);
 BENCHMARK_MAIN();

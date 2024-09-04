@@ -76,6 +76,7 @@ protected:
   // these variables pretty much don't change through the lifetime of the queue
   size_t n_;
   size_t items_per_batch_;
+  size_t power_of_two_idx_;
   size_t idx_mask_;
   size_t max_outstanding_non_consumed_items_;
   NodeAllocator alloc_;
@@ -87,7 +88,7 @@ protected:
 
 public:
   SPMCMulticastQueueBase(std::size_t N, const Allocator& alloc = Allocator())
-    : n_(N), items_per_batch_(n_ / _BATCH_NUM_), idx_mask_(n_ - 1), alloc_(alloc)
+    : n_(N), power_of_two_idx_(log2(n_)), items_per_batch_(n_ / _BATCH_NUM_), idx_mask_(n_ - 1), alloc_(alloc)
   {
     if ((N & (N - 1)) != 0)
     {
@@ -157,7 +158,7 @@ public:
     if constexpr (_synchronized_consumer_)
     {
       idx = original_idx;
-      expected_version = 1 + (idx / this->capacity());
+      expected_version = 1 + div_by_power_of_two(idx, power_of_two_idx_);
     }
 
     do
@@ -210,7 +211,7 @@ public:
     if constexpr (_synchronized_consumer_)
     {
       idx = original_idx;
-      expected_version = 1 + (idx / this->capacity());
+      expected_version = 1 + div_by_power_of_two(idx, power_of_two_idx_);
     }
 
     ConsumeReturnCode r;
@@ -268,7 +269,7 @@ public:
     if constexpr (_synchronized_consumer_)
     {
       idx = original_idx;
-      expected_version = 1 + (idx / this->capacity());
+      expected_version = 1 + div_by_power_of_two(idx, power_of_two_idx_);
     }
 
     do
@@ -329,7 +330,7 @@ public:
     if constexpr (_synchronized_consumer_)
     {
       idx = original_idx;
-      expected_version = 1 + (idx / this->capacity());
+      expected_version = 1 + div_by_power_of_two(idx, power_of_two_idx_);
     }
 
     if constexpr (_versionless_)
@@ -382,7 +383,7 @@ public:
     if constexpr (_synchronized_consumer_)
     {
       idx = original_idx;
-      expected_version = 1 + (idx / this->capacity());
+      expected_version = 1 + div_by_power_of_two(idx, power_of_two_idx_);
     }
 
     bool running = false;
@@ -431,7 +432,7 @@ public:
     if constexpr (_synchronized_consumer_)
     {
       idx = original_idx;
-      expected_version = 1 + (idx / this->capacity());
+      expected_version = 1 + div_by_power_of_two(idx, power_of_two_idx_);
     }
 
     const T* r;
@@ -469,7 +470,7 @@ public:
     if constexpr (_synchronized_consumer_)
     {
       idx = original_idx;
-      expected_version = 1 + (idx / this->capacity());
+      expected_version = 1 + div_by_power_of_two(idx, power_of_two_idx_);
     }
 
     do
@@ -519,7 +520,7 @@ public:
       if constexpr (_synchronized_consumer_)
       {
         idx = original_idx;
-        size_t expected_version = 1 + (idx / this->capacity());
+        size_t expected_version = 1 + div_by_power_of_two(idx, power_of_two_idx_);
         r = static_cast<Derived&>(*this).skip(idx, queue_idx, node, version, expected_version, consumer);
       }
       else
