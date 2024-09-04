@@ -67,7 +67,9 @@ private:
     using ConsumerProgressArray = std::array<ConsumerProgress, _MAX_CONSUMER_N_>;
     using ConsumerRegistryArray = std::array<std::atomic<bool>, _MAX_CONSUMER_N_>;
 
-    alignas(64) ConsumerProgressArray consumers_progress_;
+    using ConsumerProgressType = ConsumerProgressArray;
+    // std::conditional_t<_MAX_CONSUMER_N_ == 1, ConsumerProgress, ConsumerProgressArray>;
+    alignas(64) ConsumerProgressType consumers_progress_;
     alignas(64) ConsumerRegistryArray consumers_registry_;
 
     // these variables change somewhat infrequently, it got type int to account for race
@@ -76,8 +78,15 @@ private:
 
     ConsumerContext(Me& host) : consumer_idx_(0), host_(host), consumers_pending_attach_(0)
     {
-      for (auto it = std::begin(consumers_progress_); it != std::end(consumers_progress_); ++it)
-        it->idx.store(CONSUMER_IS_WELCOME, std::memory_order_release);
+      if constexpr (_MAX_CONSUMER_N_ == 1)
+      {
+        this->consumers_progress_[0].idx.store(CONSUMER_IS_WELCOME, std::memory_order_release);
+      }
+      else
+      {
+        for (auto it = std::begin(consumers_progress_); it != std::end(consumers_progress_); ++it)
+          it->idx.store(CONSUMER_IS_WELCOME, std::memory_order_release);
+      }
 
       std::fill(std::begin(consumers_registry_), std::end(consumers_registry_), 0 /*unlocked*/);
     }
@@ -112,13 +121,27 @@ private:
       // let's lock in our consumer next idx to the least possible idx so that
       // producer would not overrun us
       size_t idx = consumer_idx_.load(std::memory_order_acquire);
-      consumers_progress_[consumer_id].idx.store(idx, std::memory_order_release);
+      if constexpr (_MAX_CONSUMER_N_ == 1)
+      {
+        consumers_progress_[0].idx.store(idx, std::memory_order_release);
+      }
+      else
+      {
+        consumers_progress_[consumer_id].idx.store(idx, std::memory_order_release);
+      }
 
       size_t last_idx = consumer_idx_.fetch_add(1, std::memory_order_acq_rel);
       if (idx < last_idx)
       {
         // we can improve our next consumer idx given we know global last consumer idx
-        consumers_progress_[consumer_id].idx.store(last_idx, std::memory_order_release);
+        if constexpr (_MAX_CONSUMER_N_ == 1)
+        {
+          consumers_progress_[0].idx.store(last_idx, std::memory_order_release);
+        }
+        else
+        {
+          consumers_progress_[consumer_id].idx.store(last_idx, std::memory_order_release);
+        }
       }
 
       return last_idx;
@@ -266,14 +289,31 @@ public:
               // if the queue has not started, then let's assign the next read idx by ourselves!
               if constexpr (_synchronized_consumer_)
               {
-                this->consumer_ctx_.consumers_progress_.at(i).idx.store(NEXT_CONSUMER_IDX_NEEDED,
-                                                                        std::memory_order_release);
+                if constexpr (_MAX_CONSUMER_N_ == 1)
+                {
+                  this->consumer_ctx_.consumers_progress_[0].idx.store(NEXT_CONSUMER_IDX_NEEDED,
+                                                                       std::memory_order_release);
+                }
+                else
+                {
+                  this->consumer_ctx_.consumers_progress_[i].idx.store(NEXT_CONSUMER_IDX_NEEDED,
+                                                                       std::memory_order_release);
+                }
               }
               else
               {
-                this->consumer_ctx_.consumers_progress_.at(i).idx.store(0, std::memory_order_release);
-                this->consumer_ctx_.consumers_progress_.at(i).previous_version.store(
-                  version_type{}, std::memory_order_release);
+                if constexpr (_MAX_CONSUMER_N_ == 1)
+                {
+                  this->consumer_ctx_.consumers_progress_[0].idx.store(0, std::memory_order_release);
+                  this->consumer_ctx_.consumers_progress_[0].previous_version.store(
+                    version_type{}, std::memory_order_release);
+                }
+                else
+                {
+                  this->consumer_ctx_.consumers_progress_.at(i).idx.store(0, std::memory_order_release);
+                  this->consumer_ctx_.consumers_progress_.at(i).previous_version.store(
+                    version_type{}, std::memory_order_release);
+                }
               }
               producer_need_to_accept = false;
             }
@@ -281,8 +321,15 @@ public:
 
           if (producer_need_to_accept)
           {
-            this->consumer_ctx_.consumers_progress_.at(i).idx.store(CONSUMER_JOIN_REQUESTED,
-                                                                    std::memory_order_release);
+            if constexpr (_MAX_CONSUMER_N_ == 1)
+            {
+              this->consumer_ctx_.consumers_progress_[0].idx.store(CONSUMER_JOIN_REQUESTED, std::memory_order_release);
+            }
+            else
+            {
+              this->consumer_ctx_.consumers_progress_.at(i).idx.store(CONSUMER_JOIN_REQUESTED,
+                                                                      std::memory_order_release);
+            }
           }
 
           {
@@ -304,10 +351,19 @@ public:
           do
           {
             stopped = is_stopped();
-            consumer_next_idx =
-              this->consumer_ctx_.consumers_progress_.at(i).idx.load(std::memory_order_acquire);
-            previous_version =
-              this->consumer_ctx_.consumers_progress_.at(i).previous_version.load(std::memory_order_relaxed);
+            if constexpr (_MAX_CONSUMER_N_ == 1)
+            {
+              consumer_next_idx = this->consumer_ctx_.consumers_progress_[0].idx.load(std::memory_order_acquire);
+              previous_version =
+                this->consumer_ctx_.consumers_progress_[0].previous_version.load(std::memory_order_relaxed);
+            }
+            else
+            {
+              consumer_next_idx =
+                this->consumer_ctx_.consumers_progress_.at(i).idx.load(std::memory_order_acquire);
+              previous_version =
+                this->consumer_ctx_.consumers_progress_.at(i).previous_version.load(std::memory_order_relaxed);
+            }
           } while (!stopped && consumer_next_idx >= CONSUMER_JOIN_INPROGRESS);
 
           if (stopped)
@@ -337,7 +393,15 @@ public:
     bool is_locked = locker.load(std::memory_order_acquire);
     if (is_locked)
     {
-      this->consumer_ctx_.consumers_progress_.at(consumer_id).idx.store(CONSUMER_IS_WELCOME, std::memory_order_release);
+      if constexpr (_MAX_CONSUMER_N_ == 1)
+      {
+        this->consumer_ctx_.consumers_progress_[0].idx.store(CONSUMER_IS_WELCOME, std::memory_order_release);
+      }
+      else
+      {
+        this->consumer_ctx_.consumers_progress_.at(consumer_id).idx.store(CONSUMER_IS_WELCOME, std::memory_order_release);
+      }
+
       if (locker.compare_exchange_strong(is_locked, false, std::memory_order_release, std::memory_order_relaxed))
       {
         // this->consumers_pending_dettach_.fetch_add(1, std::memory_order_release);
@@ -366,7 +430,16 @@ public:
 
   size_t try_accept_new_consumer(size_t i, size_t consumer_from_idx)
   {
-    size_t consumer_next_idx = this->consumer_ctx_.consumers_progress_[i].idx.load(std::memory_order_acquire);
+    size_t consumer_next_idx;
+    if constexpr (_MAX_CONSUMER_N_ == 1)
+    {
+      consumer_next_idx = this->consumer_ctx_.consumers_progress_[0].idx.load(std::memory_order_acquire);
+    }
+    else
+    {
+      consumer_next_idx = this->consumer_ctx_.consumers_progress_[i].idx.load(std::memory_order_acquire);
+    }
+
     if (CONSUMER_JOIN_REQUESTED == consumer_next_idx)
     {
       size_t min_next_producer_idx_local;
@@ -396,8 +469,18 @@ public:
 
       if (min_next_producer_idx_local == consumer_from_idx)
       {
+        typename ConsumerContext::ConsumerProgress* consumer_progress;
+        if constexpr (_MAX_CONSUMER_N_ == 1)
+        {
+          consumer_progress = &this->consumer_ctx_.consumers_progress_[0];
+        }
+        else
+        {
+          consumer_progress = &this->consumer_ctx_.consumers_progress_[i];
+        }
+
         // new consumer wants a ticket!
-        if (this->consumer_ctx_.consumers_progress_[i].idx.compare_exchange_strong(
+        if (consumer_progress->idx.compare_exchange_strong(
               consumer_next_idx, CONSUMER_JOIN_INPROGRESS, std::memory_order_acquire, std::memory_order_relaxed))
         {
           if constexpr (_synchronized_consumer_)
@@ -405,18 +488,16 @@ public:
             // consumer_next_idx = consumer_ctx_.acquire_idx(i);
             // synchronized consumers are a bit special in that they don't lock in consume idx right away when joining as
             // that is not required since they don't have to consume all the messages
-            this->consumer_ctx_.consumers_progress_[i].idx.store(NEXT_CONSUMER_IDX_NEEDED, std::memory_order_release);
+            consumer_progress->idx.store(NEXT_CONSUMER_IDX_NEEDED, std::memory_order_release);
           }
           else
           {
             consumer_next_idx = consumer_from_idx;
-
-            size_t queue_version = consumer_next_idx / this->size();
+            size_t queue_version = consumer_next_idx / this->capacity();
             version_type previous_version;
             previous_version = (queue_version & 1) ? version_type{1u} : version_type{};
-            this->consumer_ctx_.consumers_progress_[i].previous_version.store(
-              previous_version, std::memory_order_release);
-            this->consumer_ctx_.consumers_progress_[i].idx.store(consumer_next_idx, std::memory_order_release);
+            consumer_progress->previous_version.store(previous_version, std::memory_order_release);
+            consumer_progress->idx.store(consumer_next_idx, std::memory_order_release);
           }
 
           this->consumer_ctx_.consumers_pending_attach_.fetch_sub(1, std::memory_order_release);
@@ -543,13 +624,25 @@ public:
         return ProduceReturnCode::NotRunning;
       }
 
+      size_t min_next_consumer_idx_local;
       size_t min_next_producer_idx_local = original_idx;
-      size_t min_next_consumer_idx_local = consumer_ctx_.get_next_idx();
-      // auto next_max_consumer_id = _MAX_CONSUMER_N_;
-      auto next_max_consumer_id = this->next_max_consumer_id_.load(std::memory_order_acquire);
-      for (size_t i = 0; i < next_max_consumer_id; ++i)
+      if constexpr (_MAX_CONSUMER_N_ > 1)
       {
-        size_t consumer_next_idx = try_accept_new_consumer(i, min_next_producer_idx_local);
+        min_next_consumer_idx_local = consumer_ctx_.get_next_idx();
+        auto next_max_consumer_id = this->next_max_consumer_id_.load(std::memory_order_acquire);
+        for (size_t i = 0; i < next_max_consumer_id; ++i)
+        {
+          size_t consumer_next_idx = try_accept_new_consumer(i, min_next_producer_idx_local);
+          if (consumer_next_idx < NEXT_CONSUMER_IDX_NEEDED)
+          {
+            min_next_consumer_idx_local = std::min(min_next_consumer_idx_local, consumer_next_idx);
+          }
+        }
+      }
+      else
+      {
+        min_next_consumer_idx_local = CONSUMER_IS_WELCOME;
+        size_t consumer_next_idx = try_accept_new_consumer(0, min_next_producer_idx_local);
         if (consumer_next_idx < NEXT_CONSUMER_IDX_NEEDED)
         {
           min_next_consumer_idx_local = std::min(min_next_consumer_idx_local, consumer_next_idx);
@@ -676,8 +769,15 @@ public:
       ++consumer.consumer_next_idx_;
       if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
       {
-        this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
-          consumer.consumer_next_idx_, std::memory_order_release);
+        if constexpr (_MAX_CONSUMER_N_ == 1)
+        {
+          this->consumer_ctx_.consumers_progress_[0].idx.store(consumer.consumer_next_idx_, std::memory_order_release);
+        }
+        else
+        {
+          this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
+            consumer.consumer_next_idx_, std::memory_order_release);
+        }
         consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
       }
 
@@ -697,8 +797,15 @@ public:
     if (expected_version == version)
     {
       std::forward<F>(f)(node.storage_);
-      this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
-        NEXT_CONSUMER_IDX_NEEDED, std::memory_order_release);
+      if constexpr (_MAX_CONSUMER_N_ == 1)
+      {
+        this->consumer_ctx_.consumers_progress_[0].idx.store(NEXT_CONSUMER_IDX_NEEDED, std::memory_order_release);
+      }
+      else
+      {
+        this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
+          NEXT_CONSUMER_IDX_NEEDED, std::memory_order_release);
+      }
       consumer.consumer_next_idx_ = NEXT_CONSUMER_IDX_NEEDED;
       return ConsumeReturnCode::Consumed;
     }
@@ -725,8 +832,15 @@ public:
     }
 
     std::forward<F>(f)(node.storage_);
-    this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
-      NEXT_CONSUMER_IDX_NEEDED, std::memory_order_release);
+    if constexpr (_MAX_CONSUMER_N_ == 1)
+    {
+      this->consumer_ctx_.consumers_progress_[0].idx.store(NEXT_CONSUMER_IDX_NEEDED, std::memory_order_release);
+    }
+    else
+    {
+      this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
+        NEXT_CONSUMER_IDX_NEEDED, std::memory_order_release);
+    }
     consumer.consumer_next_idx_ = NEXT_CONSUMER_IDX_NEEDED;
     return ConsumeReturnCode::Consumed;
   }
@@ -751,8 +865,16 @@ public:
     ++consumer.consumer_next_idx_;
     if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
     {
-      this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
-        consumer.consumer_next_idx_, std::memory_order_release);
+      if constexpr (_MAX_CONSUMER_N_ == 1)
+      {
+        this->consumer_ctx_.consumers_progress_[0].idx.store(consumer.consumer_next_idx_, std::memory_order_release);
+      }
+      else
+      {
+        this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
+          consumer.consumer_next_idx_, std::memory_order_release);
+      }
+
       consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
     }
 
@@ -817,8 +939,15 @@ public:
     ++consumer.consumer_next_idx_;
     if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
     {
-      this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
-        consumer.consumer_next_idx_, std::memory_order_release);
+      if constexpr (_MAX_CONSUMER_N_ == 1)
+      {
+        this->consumer_ctx_.consumers_progress_[0].idx.store(consumer.consumer_next_idx_, std::memory_order_release);
+      }
+      else
+      {
+        this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
+          consumer.consumer_next_idx_, std::memory_order_release);
+      }
       consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
     }
 
@@ -829,8 +958,16 @@ public:
   ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node, version_type version,
                          version_type expected_version, C& consumer) requires(!_versionless_ and !_binary_version_)
   {
-    this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
-      NEXT_CONSUMER_IDX_NEEDED, std::memory_order_release);
+    if constexpr (_MAX_CONSUMER_N_ == 1)
+    {
+      this->consumer_ctx_.consumers_progress_[0].idx.store(consumer.consumer_next_idx_, std::memory_order_release);
+    }
+    else
+    {
+      this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
+        NEXT_CONSUMER_IDX_NEEDED, std::memory_order_release);
+    }
+
     consumer.consumer_next_idx_ = NEXT_CONSUMER_IDX_NEEDED;
     return ConsumeReturnCode::Consumed;
   }
@@ -839,8 +976,15 @@ public:
   ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node,
                          C& consumer) requires(_versionless_ and _synchronized_consumer_)
   {
-    this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
-      NEXT_CONSUMER_IDX_NEEDED, std::memory_order_release);
+    if constexpr (_MAX_CONSUMER_N_ == 1)
+    {
+      this->consumer_ctx_.consumers_progress_[0].idx.store(consumer.consumer_next_idx_, std::memory_order_release);
+    }
+    else
+    {
+      this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
+        NEXT_CONSUMER_IDX_NEEDED, std::memory_order_release);
+    }
     consumer.consumer_next_idx_ = NEXT_CONSUMER_IDX_NEEDED;
     return ConsumeReturnCode::Consumed;
   }
@@ -854,8 +998,15 @@ public:
     ++consumer.consumer_next_idx_;
     if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
     {
-      this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
-        consumer.consumer_next_idx_, std::memory_order_release);
+      if constexpr (_MAX_CONSUMER_N_ == 1)
+      {
+        this->consumer_ctx_.consumers_progress_[0].idx.store(consumer.consumer_next_idx_, std::memory_order_release);
+      }
+      else
+      {
+        this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
+          consumer.consumer_next_idx_, std::memory_order_release);
+      }
       consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
     }
 

@@ -411,7 +411,8 @@ public:
       }
       else
       {
-        //_mm_pause();
+        // for (int i = 0; i < 20; ++i)
+        //   _mm_pause();
       }
 
       running = this->is_running();
