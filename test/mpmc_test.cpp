@@ -215,7 +215,8 @@ TEST_CASE("Synchronized Blocking MPMC functional test")
 TEST_CASE("Synchronized Non-Blocking MPMC functional test")
 {
   using Queue = SPMCMulticastQueueReliableBounded<Order, 2, 2, 2>;
-  Queue q1(2);
+  size_t N = 8;
+  Queue q1(N);
 
   constexpr bool blocking = true;
   ConsumerNonBlocking<Queue> c1 = {q1};
@@ -226,76 +227,101 @@ TEST_CASE("Synchronized Non-Blocking MPMC functional test")
 
   q1.start();
   {
-    auto r = p1.emplace(1u, 1u, 100.0, 'A');
-    CHECK(ProduceReturnCode::Published == r);
-    r = p2.emplace(2u, 2u, 100.0, 'A');
-    CHECK(ProduceReturnCode::Published == r);
-    r = p2.emplace(2u, 2u, 100.0, 'A');
+    for (size_t i = 0; i < N; ++i)
+    {
+      auto r = p1.emplace(1u, 1u, 100.0, 'A');
+      CHECK(ProduceReturnCode::Published == r);
+    }
+
+    auto r = p2.emplace(3u, 3u, 100.0, 'A');
     CHECK(ProduceReturnCode::SlowConsumer == r);
-    r = p1.emplace(2u, 2u, 100.0, 'A');
+    r = p1.emplace(4u, 4u, 100.0, 'A');
     CHECK(ProduceReturnCode::SlowConsumer == r);
-  }
-  {
-    auto r = c1.consume([](const Order& o) { std::cout << o; });
-    CHECK(ConsumeReturnCode::Consumed == r);
-    r = c2.consume([](const Order& o) { std::cout << o; });
-    CHECK(ConsumeReturnCode::Consumed == r);
-    r = c2.consume([](const Order& o) { std::cout << o; });
-    CHECK(ConsumeReturnCode::Consumed == r);
-    r = c1.consume([](const Order& o) { std::cout << o; });
-    CHECK(ConsumeReturnCode::Consumed == r);
   }
 
   {
-    auto r = p1.emplace(1u, 1u, 100.0, 'A');
+    for (size_t i = 0; i < N; ++i)
+    {
+      auto r = c1.consume([](const Order& o) { CHECK(1 == o.id); });
+      CHECK(ConsumeReturnCode::Consumed == r);
+    }
+
+    for (size_t i = 0; i < N; ++i)
+    {
+      auto r = c2.consume([](const Order& o) { CHECK(1 == o.id); });
+      CHECK(ConsumeReturnCode::Consumed == r);
+    }
+  }
+
+  {
+    auto r = p1.emplace(3u, 3u, 100.0, 'A');
     CHECK(ProduceReturnCode::Published == r);
-    r = p2.emplace(2u, 2u, 100.0, 'A');
+    r = p2.emplace(4u, 4u, 100.0, 'A');
     CHECK(ProduceReturnCode::Published == r);
   }
 
   {
-    auto r = c1.consume([](const Order& o) { CHECK(o.id == 2); });
+    // producer would continue publishing from the previous idx which failed before because the queue was full!
+    auto r = c1.consume([](const Order& o) { CHECK(o.id == 4); });
     CHECK(ConsumeReturnCode::Consumed == r);
-    r = c2.consume([](const Order& o) { CHECK(o.id == 2); });
+    r = c2.consume([](const Order& o) { CHECK(o.id == 4); });
     CHECK(ConsumeReturnCode::Consumed == r);
-    r = c2.consume([](const Order& o) { CHECK(o.id == 1); });
+    r = c2.consume([](const Order& o) { CHECK(o.id == 3); });
     CHECK(ConsumeReturnCode::Consumed == r);
-    r = c1.consume([](const Order& o) { CHECK(o.id == 1); });
+    r = c1.consume([](const Order& o) { CHECK(o.id == 3); });
     CHECK(ConsumeReturnCode::Consumed == r);
   }
 }
 
-TEST_CASE("Synchronized Consumer and Producer Blocking MPMC functional test")
+TEST_CASE(
+  "Synchronized Consumer and Producer Blocking MPMC functional test - non-multicast consumers")
 {
   // this would mean that every message on the queue would be consumed only
   // once by one of the consumers
   constexpr bool _MULTICAST_ = false;
 
-  using Queue = SPMCMulticastQueueReliableBounded<Order, 2, 2, 2, _MULTICAST_>;
-  Queue q1(2);
-
   constexpr bool blocking = true;
-  ConsumerBlocking<Queue> c1{q1};
-  ConsumerBlocking<Queue> c2{q1};
+  size_t N = 8;
+  using Queue = SPMCMulticastQueueReliableBounded<Order, 2, 2, 2, 0, _MULTICAST_>;
+  Queue q1(N);
+
+  ConsumerBlocking<Queue> c1 = {q1};
+  ConsumerBlocking<Queue> c2 = {q1};
 
   ProducerBlocking<Queue> p1(q1);
   ProducerBlocking<Queue> p2(q1);
   q1.start();
 
-  CHECK(ProduceReturnCode::Published == p1.emplace(1u, 1u, 100.0, 'A'));
-  CHECK(ProduceReturnCode::Published == p2.emplace(2u, 2u, 100.0, 'A'));
-  CHECK(ConsumeReturnCode::Consumed == c1.consume([](const Order& o) { CHECK(o.id == 1u); }));
-  CHECK(ConsumeReturnCode::Consumed == c2.consume([](const Order& o) { CHECK(o.id == 2u); }));
+  {
+    for (size_t i = 0; i < N; ++i)
+    {
+      auto r = p1.emplace(1u, 1u, 100.0, 'A');
+      CHECK(ProduceReturnCode::Published == r);
+    }
+  }
 
-  CHECK(ProduceReturnCode::Published == p1.emplace(3u, 1u, 100.0, 'A'));
-  CHECK(ProduceReturnCode::Published == p2.emplace(4u, 2u, 100.0, 'A'));
-  CHECK(ConsumeReturnCode::Consumed == c1.consume([](const Order& o) { CHECK(o.id == 3u); }));
-  CHECK(ConsumeReturnCode::Consumed == c2.consume([](const Order& o) { CHECK(o.id == 4u); }));
+  {
+    for (size_t i = 0; i < N; ++i)
+    {
+      auto r = c1.consume([](const Order& o) { CHECK(1 == o.id); });
+      CHECK(ConsumeReturnCode::Consumed == r);
+    }
+  }
 
-  CHECK(ProduceReturnCode::Published == p1.emplace(5u, 1u, 100.0, 'A'));
-  CHECK(ProduceReturnCode::Published == p2.emplace(6u, 2u, 100.0, 'A'));
-  CHECK(ConsumeReturnCode::Consumed == c2.consume([](const Order& o) { CHECK(o.id == 5u); }));
-  CHECK(ConsumeReturnCode::Consumed == c1.consume([](const Order& o) { CHECK(o.id == 6u); }));
+  {
+    auto r = p1.emplace(4u, 4u, 'A');
+    CHECK(ProduceReturnCode::Published == r);
+    r = p2.emplace(3u, 3u, 100.0, 'A');
+    CHECK(ProduceReturnCode::Published == r);
+  }
+
+  {
+    auto r = c1.consume([](const Order& o) { CHECK(o.id == 4); });
+    CHECK(ConsumeReturnCode::Consumed == r);
+
+    r = c2.consume([](const Order& o) { CHECK(o.id == 3); });
+    CHECK(ConsumeReturnCode::Consumed == r);
+  }
 }
 
 TEST_CASE("MPMC functional test - Blocking Peek and Skip")
@@ -303,7 +329,7 @@ TEST_CASE("MPMC functional test - Blocking Peek and Skip")
   using MsgType = uint32_t;
   using Queue = SPMCMulticastQueueReliableBounded<MsgType, 2, 2>;
 
-  Queue q(8);
+  Queue q(64);
 
   constexpr bool blocking = true;
   ConsumerBlocking<Queue> c1;

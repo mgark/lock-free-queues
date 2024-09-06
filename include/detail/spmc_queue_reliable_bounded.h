@@ -31,34 +31,38 @@
 #include <unistd.h>
 
 template <class T, size_t _MAX_CONSUMER_N_ = 8, size_t _MAX_PRODUCER_N_ = 1, size_t _BATCH_NUM_ = 4,
-          bool _MULTICAST_ = true, class Allocator = std::allocator<T>,
+          size_t _CPU_PAUSE_N_ = 0, bool _MULTICAST_ = true, class Allocator = std::allocator<T>,
           class VersionType = std::conditional_t<((!_MULTICAST_ && (_MAX_CONSUMER_N_ > 1)) || _MAX_PRODUCER_N_ > 1u), size_t, uint8_t>>
 class SPMCMulticastQueueReliableBounded
-  : public SPMCMulticastQueueBase<T, SPMCMulticastQueueReliableBounded<T, _MAX_CONSUMER_N_, _MAX_PRODUCER_N_, _BATCH_NUM_, _MULTICAST_, Allocator>,
-                                  _MAX_CONSUMER_N_, _MAX_PRODUCER_N_, _BATCH_NUM_, _MULTICAST_, Allocator, VersionType>
+  : public SPMCMulticastQueueBase<T, SPMCMulticastQueueReliableBounded<T, _MAX_CONSUMER_N_, _MAX_PRODUCER_N_, _BATCH_NUM_, _CPU_PAUSE_N_, _MULTICAST_, Allocator>,
+                                  _MAX_CONSUMER_N_, _MAX_PRODUCER_N_, _BATCH_NUM_, _CPU_PAUSE_N_, _MULTICAST_, Allocator, VersionType>
 {
 public:
-  using Base = SPMCMulticastQueueBase<T, SPMCMulticastQueueReliableBounded, _MAX_CONSUMER_N_,
-                                      _MAX_PRODUCER_N_, _BATCH_NUM_, _MULTICAST_, Allocator, VersionType>;
+  using Base = SPMCMulticastQueueBase<T, SPMCMulticastQueueReliableBounded, _MAX_CONSUMER_N_, _MAX_PRODUCER_N_,
+                                      _BATCH_NUM_, _CPU_PAUSE_N_, _MULTICAST_, Allocator, VersionType>;
   using Base::_binary_version_;
+  using Base::_cache_line_num_;
+  using Base::_item_per_cache_line_num_;
+  using Base::_remap_index_;
   using Base::_reuse_single_bit_from_object_;
+  using Base::_spsc_;
   using Base::_synchronized_consumer_;
   using Base::_synchronized_producer_;
   using Base::_versionless_;
 
 private:
   using Me =
-    SPMCMulticastQueueReliableBounded<T, _MAX_CONSUMER_N_, _MAX_PRODUCER_N_, _BATCH_NUM_, _MULTICAST_, Allocator, VersionType>;
+    SPMCMulticastQueueReliableBounded<T, _MAX_CONSUMER_N_, _MAX_PRODUCER_N_, _BATCH_NUM_, _CPU_PAUSE_N_, _MULTICAST_, Allocator, VersionType>;
 
   static_assert(_MAX_CONSUMER_N_ > 0);
   static_assert(_MAX_PRODUCER_N_ > 0);
 
   struct ConsumerContext
   {
-    alignas(64) std::atomic<size_t> consumer_idx_;
-    alignas(64) Me& host_;
+    alignas(_CACHE_LINE_SIZE_) std::atomic<size_t> consumer_idx_;
+    alignas(_CACHE_LINE_SIZE_) Me& host_;
 
-    struct alignas(64) ConsumerProgress
+    struct alignas(_CACHE_LINE_SIZE_) ConsumerProgress
     {
       std::atomic<size_t> idx;
       std::atomic<VersionType> previous_version;
@@ -69,12 +73,12 @@ private:
 
     using ConsumerProgressType = ConsumerProgressArray;
     // std::conditional_t<_MAX_CONSUMER_N_ == 1, ConsumerProgress, ConsumerProgressArray>;
-    alignas(64) ConsumerProgressType consumers_progress_;
-    alignas(64) ConsumerRegistryArray consumers_registry_;
+    alignas(_CACHE_LINE_SIZE_) ConsumerProgressType consumers_progress_;
+    alignas(_CACHE_LINE_SIZE_) ConsumerRegistryArray consumers_registry_;
 
     // these variables change somewhat infrequently, it got type int to account for race
     // conditions where producers would see first indication of a consumer joining before increment of this variable
-    alignas(64) std::atomic<int> consumers_pending_attach_;
+    alignas(_CACHE_LINE_SIZE_) std::atomic<int> consumers_pending_attach_;
 
     ConsumerContext(Me& host) : consumer_idx_(0), host_(host), consumers_pending_attach_(0)
     {
@@ -150,15 +154,15 @@ private:
 
   struct ProducerContext
   {
-    struct alignas(64) ProducerProgress
+    struct alignas(_CACHE_LINE_SIZE_) ProducerProgress
     {
       std::atomic<size_t> idx;
     };
 
-    alignas(64) std::atomic<size_t> producer_idx_;
-    alignas(64) std::array<ProducerProgress, _MAX_PRODUCER_N_> producer_progress_;
-    alignas(64) std::array<std::atomic<bool>, _MAX_PRODUCER_N_> producer_registry_;
-    alignas(64) Me& host_;
+    alignas(_CACHE_LINE_SIZE_) std::atomic<size_t> producer_idx_;
+    alignas(_CACHE_LINE_SIZE_) std::array<ProducerProgress, _MAX_PRODUCER_N_> producer_progress_;
+    alignas(_CACHE_LINE_SIZE_) std::array<std::atomic<bool>, _MAX_PRODUCER_N_> producer_registry_;
+    alignas(_CACHE_LINE_SIZE_) Me& host_;
 
     ProducerContext(Me& host) : host_(host)
     {
@@ -667,7 +671,7 @@ public:
         }
       }
 
-      assert(original_idx >= min_next_consumer_idx_local);
+      assert(no_active_consumers || original_idx >= min_next_consumer_idx_local);
 
       if constexpr (!blocking)
       {
@@ -680,12 +684,22 @@ public:
       consumers_pending_attach = this->consumer_ctx_.consumers_pending_attach_.load(std::memory_order_acquire);
       if (no_free_slot)
       {
-        //_mm_pause();
+        unroll<_CPU_PAUSE_N_>([]() { _mm_pause(); });
       }
     }
 
     size_t idx = original_idx & this->idx_mask_;
-    Node& node = this->nodes_[idx];
+    size_t node_idx;
+    if constexpr (_remap_index_)
+    {
+      node_idx = map_index<_item_per_cache_line_num_, _cache_line_num_>(original_idx) & this->idx_mask_;
+    }
+    else
+    {
+      node_idx = idx;
+    }
+
+    Node& node = this->nodes_[node_idx];
     version_type version;
     if constexpr (!_versionless_)
     {

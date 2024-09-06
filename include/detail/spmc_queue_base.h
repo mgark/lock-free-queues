@@ -26,17 +26,21 @@
 #include <string>
 #include <type_traits>
 
-template <class T, class Derived, size_t _MAX_CONSUMER_N_, size_t _MAX_PRODUCER_N_,
-          size_t _BATCH_NUM_, bool _MULTICAST_, class Allocator, class VersionType>
+template <class T, class Derived, size_t _MAX_CONSUMER_N_, size_t _MAX_PRODUCER_N_, size_t _BATCH_NUM_,
+          size_t _CPU_PAUSE_N_, bool _MULTICAST_, class Allocator, class VersionType>
 class SPMCMulticastQueueBase
 {
 public:
   using type = T;
   static constexpr bool _synchronized_consumer_ = _MAX_CONSUMER_N_ > 1 && !_MULTICAST_;
   static constexpr bool _synchronized_producer_ = _MAX_PRODUCER_N_ > 1;
+  static constexpr bool _spsc_ = _MAX_PRODUCER_N_ == 1 and _MAX_CONSUMER_N_ == 1;
   static constexpr bool _reuse_single_bit_from_object_ = msb_always_0<T> && not _synchronized_consumer_;
   static constexpr bool _versionless_ = not _synchronized_producer_;
   static constexpr bool _binary_version_ = not _versionless_ and not _synchronized_consumer_;
+  static constexpr bool _remap_index_ =
+    sizeof(T) <= _CACHE_LINE_SIZE_ and (_synchronized_producer_ or _MAX_CONSUMER_N_ > 1);
+  static constexpr size_t _storage_alignment_ = _remap_index_ ? power_of_2_far(sizeof(T)) : alignof(T);
 
   struct ConsumerTicket
   {
@@ -59,13 +63,13 @@ public:
 protected:
   struct NodeWithVersion
   {
-    alignas(T) std::byte storage_[sizeof(T)];
+    alignas(_storage_alignment_) std::byte storage_[sizeof(T)];
     std::atomic<VersionType> version_;
   };
 
-  struct NodeWithoutVersion
+  struct alignas(_storage_alignment_) NodeWithoutVersion
   {
-    alignas(T) std::byte storage_[sizeof(T)];
+    alignas(_storage_alignment_) std::byte storage_[sizeof(T)];
   };
 
   using Node = std::conditional_t<_versionless_, NodeWithoutVersion, NodeWithVersion>;
@@ -87,12 +91,32 @@ protected:
   std::atomic<QueueState> state_{QueueState::Created};
 
 public:
+  static constexpr size_t _item_per_cache_line_num_ = 64 / sizeof(Node);
+  static constexpr size_t _cache_line_num_ =
+    power_of_2_far(std::max(_MAX_PRODUCER_N_, _item_per_cache_line_num_));
+  static constexpr size_t _contention_window_size_ = _cache_line_num_ * _item_per_cache_line_num_;
+
+  static_assert((_cache_line_num_ & (_cache_line_num_ - 1)) == 0);
+  static_assert((_item_per_cache_line_num_ & (_item_per_cache_line_num_ - 1)) == 0);
+
   SPMCMulticastQueueBase(std::size_t N, const Allocator& alloc = Allocator())
     : n_(N), power_of_two_idx_(log2(n_)), items_per_batch_(n_ / _BATCH_NUM_), idx_mask_(n_ - 1), alloc_(alloc)
   {
     if ((N & (N - 1)) != 0)
     {
       throw std::runtime_error("N is not power of two");
+    }
+
+    if constexpr (_remap_index_ && _contention_window_size_ >= 1)
+    {
+      if (N % _contention_window_size_ != 0)
+      {
+        throw std::runtime_error(std::string("N [")
+                                   .append(std::to_string(N))
+                                   .append("] is not divisible by non-contention window [")
+                                   .append(std::to_string(_contention_window_size_))
+                                   .append("]"));
+      }
     }
 
     if ((items_per_batch_ & (items_per_batch_ - 1)) != 0)
@@ -113,6 +137,7 @@ public:
       size_t producer_last_idx = static_cast<const Derived*>(this)->get_producer_idx();
       for (size_t i = 0; i < this->n_; ++i)
       {
+        // WARNING! need to revise if remap_index is used here!
         Node& node = this->nodes_[i];
         void* storage = node.storage_;
         if (i < producer_last_idx)
@@ -153,7 +178,17 @@ public:
     ConsumeReturnCode r;
     size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
     size_t idx = original_idx & consumer.idx_mask_;
-    Node& node = this->nodes_[idx];
+    size_t node_idx;
+    if constexpr (_remap_index_)
+    {
+      node_idx = map_index<_item_per_cache_line_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
+    }
+    else
+    {
+      node_idx = idx;
+    }
+
+    Node& node = this->nodes_[node_idx];
     size_t expected_version;
     if constexpr (_synchronized_consumer_)
     {
@@ -205,7 +240,16 @@ public:
   {
     size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
     size_t idx = original_idx & consumer.idx_mask_;
-    Node& node = this->nodes_[idx];
+
+    size_t node_idx;
+    if constexpr (_remap_index_)
+    {
+      node_idx = map_index<_item_per_cache_line_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
+    }
+    else
+    {
+      node_idx = idx;
+    }
 
     size_t expected_version;
     if constexpr (_synchronized_consumer_)
@@ -213,6 +257,8 @@ public:
       idx = original_idx;
       expected_version = 1 + div_by_power_of_two(idx, power_of_two_idx_);
     }
+
+    Node& node = this->nodes_[node_idx];
 
     ConsumeReturnCode r;
     if constexpr (_versionless_)
@@ -263,7 +309,18 @@ public:
 
     size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
     size_t idx = original_idx & consumer.idx_mask_;
-    Node& node = this->nodes_[idx];
+
+    size_t node_idx;
+    if constexpr (_remap_index_)
+    {
+      node_idx = map_index<_item_per_cache_line_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
+    }
+    else
+    {
+      node_idx = idx;
+    }
+
+    Node& node = this->nodes_[node_idx];
 
     size_t expected_version;
     if constexpr (_synchronized_consumer_)
@@ -323,8 +380,15 @@ public:
     size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
     size_t idx = original_idx & consumer.idx_mask_;
 
-    VersionType version;
-    Node& node = this->nodes_[idx];
+    size_t node_idx;
+    if constexpr (_remap_index_)
+    {
+      node_idx = map_index<_item_per_cache_line_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
+    }
+    else
+    {
+      node_idx = idx;
+    }
 
     size_t expected_version;
     if constexpr (_synchronized_consumer_)
@@ -333,6 +397,7 @@ public:
       expected_version = 1 + div_by_power_of_two(idx, power_of_two_idx_);
     }
 
+    Node& node = this->nodes_[node_idx];
     if constexpr (_versionless_)
     {
       r = static_cast<Derived&>(*this).consume_by_func(
@@ -378,7 +443,16 @@ public:
   {
     size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
     size_t idx = original_idx & consumer.idx_mask_;
-    Node& node = this->nodes_[idx];
+    size_t node_idx;
+    if constexpr (_remap_index_)
+    {
+      node_idx = map_index<_item_per_cache_line_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
+    }
+    else
+    {
+      node_idx = idx;
+    }
+
     size_t expected_version;
     if constexpr (_synchronized_consumer_)
     {
@@ -387,6 +461,7 @@ public:
     }
 
     bool running = false;
+    Node& node = this->nodes_[node_idx];
     const T* r;
     do
     {
@@ -412,8 +487,7 @@ public:
       }
       else
       {
-        // for (int i = 0; i < 20; ++i)
-        //   _mm_pause();
+        unroll<_CPU_PAUSE_N_>([]() { _mm_pause(); });
       }
 
       running = this->is_running();
@@ -426,7 +500,16 @@ public:
   {
     size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
     size_t idx = consumer.consumer_next_idx_ & consumer.idx_mask_;
-    Node& node = this->nodes_[idx];
+
+    size_t node_idx;
+    if constexpr (_remap_index_)
+    {
+      node_idx = map_index<_item_per_cache_line_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
+    }
+    else
+    {
+      node_idx = idx;
+    }
 
     size_t expected_version;
     if constexpr (_synchronized_consumer_)
@@ -437,6 +520,7 @@ public:
 
     const T* r;
     bool running = false;
+    Node& node = this->nodes_[node_idx];
     if constexpr (_versionless_)
     {
       r = peek(queue_idx, node, consumer.consumer_next_idx_, consumer);
@@ -463,8 +547,15 @@ public:
     ConsumeReturnCode r;
     size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
     size_t idx = original_idx & consumer.idx_mask_;
-    Node& node = this->nodes_[idx];
-    QueueState state;
+    size_t node_idx;
+    if constexpr (_remap_index_)
+    {
+      node_idx = map_index<_item_per_cache_line_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
+    }
+    else
+    {
+      node_idx = idx;
+    }
 
     size_t expected_version;
     if constexpr (_synchronized_consumer_)
@@ -473,6 +564,8 @@ public:
       expected_version = 1 + div_by_power_of_two(idx, power_of_two_idx_);
     }
 
+    QueueState state;
+    Node& node = this->nodes_[node_idx];
     do
     {
       if constexpr (_versionless_)
@@ -507,9 +600,18 @@ public:
   {
     size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
     size_t idx = original_idx & consumer.idx_mask_;
-    Node& node = this->nodes_[idx];
+    size_t node_idx;
+    if constexpr (_remap_index_)
+    {
+      node_idx = map_index<_item_per_cache_line_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
+    }
+    else
+    {
+      node_idx = idx;
+    }
 
     ConsumeReturnCode r;
+    Node& node = this->nodes_[node_idx];
     if constexpr (_versionless_)
     {
       r = static_cast<Derived&>(*this).skip(idx, queue_idx, node, consumer);

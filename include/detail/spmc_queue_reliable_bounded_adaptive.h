@@ -32,7 +32,7 @@ class SPMCMulticastQueueReliableAdaptiveBounded
 {
   static constexpr size_t _MAX_PRODUCER_N_ = 1;
 
-  struct alignas(64) ConsumerProgress
+  struct alignas(_CACHE_LINE_SIZE_) ConsumerProgress
   {
     std::atomic<size_t> idx;
     std::atomic<size_t> previous_version;
@@ -41,11 +41,11 @@ class SPMCMulticastQueueReliableAdaptiveBounded
 
   struct ProducerContext
   {
-    alignas(64) std::atomic<size_t> producer_idx_;
-    alignas(64) std::atomic<size_t> min_next_consumer_idx_;
-    alignas(64) std::atomic<size_t> min_next_producer_idx_;
+    alignas(_CACHE_LINE_SIZE_) std::atomic<size_t> producer_idx_;
+    alignas(_CACHE_LINE_SIZE_) std::atomic<size_t> min_next_consumer_idx_;
+    alignas(_CACHE_LINE_SIZE_) std::atomic<size_t> min_next_producer_idx_;
 
-    struct alignas(64) ProducerProgress
+    struct alignas(_CACHE_LINE_SIZE_) ProducerProgress
     {
       std::atomic<size_t> idx;
     };
@@ -98,11 +98,11 @@ class SPMCMulticastQueueReliableAdaptiveBounded
   using ConsumerProgressArray = std::array<ConsumerProgress, _MAX_CONSUMER_N_ + 1>;
   using ConsumerRegistryArray = std::array<std::atomic<bool>, _MAX_CONSUMER_N_ + 1>;
 
-  alignas(64) ConsumerProgressArray consumers_progress_;
-  alignas(64) ConsumerRegistryArray consumers_registry_;
+  alignas(_CACHE_LINE_SIZE_) ConsumerProgressArray consumers_progress_;
+  alignas(_CACHE_LINE_SIZE_) ConsumerRegistryArray consumers_registry_;
 
   // these variables change somewhat infrequently
-  alignas(64) std::atomic<int> consumers_pending_attach_;
+  alignas(_CACHE_LINE_SIZE_) std::atomic<int> consumers_pending_attach_;
   std::atomic<size_t> max_consumer_id_;
   size_t prev_version_;
 

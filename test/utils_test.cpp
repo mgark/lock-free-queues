@@ -19,6 +19,7 @@
 #include "detail/single_bit_reuse.h"
 #include <assert.h>
 #include <catch2/catch_all.hpp>
+#include <cstdint>
 #include <mpmc.h>
 #include <thread>
 
@@ -72,5 +73,25 @@ TEST_CASE("fast div test")
   CHECK(50 == div_by_power_of_two(100, log2(2)));
   CHECK(25 == div_by_power_of_two(100, log2(4)));
 }
+
+TEST_CASE("Map index to avoid contention")
+{
+  using T = size_t;
+  size_t ring_buffer_sz = 256;
+  for (size_t i = 0; i < 350; ++i)
+  {
+    auto v1 = map_index<4, 3>(i) % ring_buffer_sz;
+    std::cout << "v1=" << std::to_string(i) << "=" << v1 << "\n";
+  }
+}
+
+TEST_CASE("power_of_2_far_test")
+{
+  CHECK(power_of_2_far(3) == 4);
+  CHECK(power_of_2_far(4) == 4);
+  CHECK(power_of_2_far(0) == 1);
+  CHECK(power_of_2_far(5) == 8);
+}
+
 static_assert(std::atomic<integral_msb_always_0<size_t>>::is_always_lock_free);
 int main(int argc, char** argv) { return Catch::Session().run(argc, argv); }

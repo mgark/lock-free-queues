@@ -158,7 +158,7 @@ public:
 };
 
 template <class Queue>
-class alignas(64) ProducerBlocking : public ProducerBase<Queue, ProducerBlocking<Queue>>
+class alignas(_CACHE_LINE_SIZE_) ProducerBlocking : public ProducerBase<Queue, ProducerBlocking<Queue>>
 {
 public:
   static constexpr bool blocking_v = true;
@@ -166,7 +166,8 @@ public:
 };
 
 template <class Queue>
-class alignas(64) ProducerNonBlocking : public ProducerBase<Queue, ProducerNonBlocking<Queue>>
+class alignas(_CACHE_LINE_SIZE_) ProducerNonBlocking
+  : public ProducerBase<Queue, ProducerNonBlocking<Queue>>
 {
 public:
   static constexpr bool blocking_v = false;

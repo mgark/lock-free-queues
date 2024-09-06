@@ -17,6 +17,7 @@
 #pragma once
 
 #include <atomic>
+#include <bits/utility.h>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
@@ -149,6 +150,51 @@ size_t div_by_power_of_two(size_t dividend, size_t devisor_idx)
 {
   return DIV_BY_POWER_OF_TWO[devisor_idx](dividend);
 }
+
+template <class F, size_t... N>
+void do_unroll(F&& f, std::index_sequence<N...>)
+{
+  size_t unused[] = {(std::forward<F>(f)(), N)...};
+  (void)unused;
+}
+
+template <size_t N, class F>
+void unroll(F&& f)
+{
+  if (N > 0)
+  {
+    return do_unroll(std::forward<F>(f), std::make_index_sequence<N>{});
+  }
+}
+
+consteval size_t power_of_2_far(size_t val)
+{
+  auto far_val = std::lower_bound(begin(POWER_OF_TWO), end(POWER_OF_TWO), val);
+  if (far_val == end(POWER_OF_TWO))
+  {
+    return val;
+  }
+  else
+  {
+    return *far_val;
+  }
+}
+
+// compilers will optimize it given so many constants here
+template <size_t ItemsPerCacheLine, size_t CacheLinesNum>
+size_t map_index(size_t original_idx)
+{
+  if constexpr (ItemsPerCacheLine == 0)
+    return original_idx;
+
+  constexpr size_t window_size = ItemsPerCacheLine * CacheLinesNum;
+  size_t idx = original_idx % window_size;
+  size_t window_cache_line_idx = idx % CacheLinesNum;
+  size_t cache_line_idx = idx / CacheLinesNum;
+  return original_idx - idx + window_cache_line_idx * ItemsPerCacheLine + cache_line_idx;
+}
+
+static constexpr size_t _CACHE_LINE_SIZE_ = 64;
 
 #define _DISABLE_UNRELIABLE_MULTICAST_TEST_
 //#define _DISABLE_ADAPTIVE_QUEUE_TEST_

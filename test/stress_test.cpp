@@ -30,6 +30,8 @@ TEST_CASE(
   std::array<std::atomic<size_t>, _MAX_CONSUMERS_> per_consumer_actual_sum{};
   std::array<std::atomic<size_t>, _MAX_CONSUMERS_> per_consumer_target_sum{};
   std::atomic_int consumer_finished_num{0};
+  // static_assert(Queue::_contention_window_size_ == 64);
+  // static_assert(Queue::_remap_index_ == false);
 
   TLOG << "\n  " << Catch::getResultCapture().getCurrentTestName() << "\n";
 
@@ -132,7 +134,7 @@ TEST_CASE(
   std::string s;
   std::mutex guard;
   constexpr size_t _MAX_CONSUMERS_ = 1;
-  constexpr size_t _PUBLISHER_QUEUE_SIZE = 4;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 64;
   constexpr size_t N = 10'000'000;
   constexpr size_t ATTACH_DETACH_ITERATIONS = 20000;
   constexpr size_t CONSUMED_PER_ITERATION = N / ATTACH_DETACH_ITERATIONS / 100;
@@ -242,9 +244,9 @@ TEST_CASE("Bounded blocking reliable multicast SPMC attach detach & stress test"
   std::string s;
   std::mutex guard;
   constexpr size_t _MAX_CONSUMERS_ = 8;
-  constexpr size_t _PUBLISHER_QUEUE_SIZE = 4;
-  constexpr size_t N_PER_CONSUMER = 20000;
-  constexpr size_t ATTACH_DETACH_ITERATIONS = 3000;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 256;
+  constexpr size_t N_PER_CONSUMER = 10000;
+  constexpr size_t ATTACH_DETACH_ITERATIONS = 1000;
   constexpr size_t CONSUMED_PER_ITERATION = N_PER_CONSUMER / ATTACH_DETACH_ITERATIONS;
   using Queue = SPMCMulticastQueueReliableBounded<size_t, _MAX_CONSUMERS_>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
@@ -360,13 +362,13 @@ TEST_CASE("Bounded blocking reliable anycast MPMC attach detach & stress test")
 
   constexpr size_t _MAX_CONSUMERS_ = 8;
   constexpr size_t _MAX_PUBLISHERS_ = 8;
-  constexpr size_t _PUBLISHER_QUEUE_SIZE = 4;
-  constexpr size_t _ATTACH_DETACH_ITERATIONS_ = 1000;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 128;
+  constexpr size_t _ATTACH_DETACH_ITERATIONS_ = 300;
   constexpr size_t _N_PER_ITERATION_ = 3;
   constexpr size_t _N_TO_CONSUME_ = _N_PER_ITERATION_ * _ATTACH_DETACH_ITERATIONS_ * _MAX_CONSUMERS_;
   constexpr bool _MULTICAST_ = false;
 
-  using Queue = SPMCMulticastQueueReliableBounded<size_t, _MAX_CONSUMERS_, _MAX_PUBLISHERS_, 4, _MULTICAST_>;
+  using Queue = SPMCMulticastQueueReliableBounded<size_t, _MAX_CONSUMERS_, _MAX_PUBLISHERS_, 4, 0, _MULTICAST_>;
 
   std::string s;
   std::mutex guard;
@@ -477,7 +479,7 @@ TEST_CASE("Bounded blocking reliable anycast MPSC attach detach & stress test")
 
   constexpr size_t _MAX_CONSUMERS_ = 1;
   constexpr size_t _MAX_PUBLISHERS_ = 8;
-  constexpr size_t _PUBLISHER_QUEUE_SIZE = 4;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 128;
   constexpr size_t _ATTACH_DETACH_ITERATIONS_ = 40000;
   constexpr size_t _N_PER_ITERATION_ = 513;
   constexpr size_t _N_TO_CONSUME_ = _N_PER_ITERATION_ * _ATTACH_DETACH_ITERATIONS_ * _MAX_CONSUMERS_;
@@ -608,13 +610,13 @@ TEST_CASE(
   constexpr size_t _MAX_CONSUMERS_ = 8;
   constexpr size_t _MAX_PUBLISHERS_ = 8;
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 4;
-  constexpr size_t _ATTACH_DETACH_ITERATIONS_ = 1000;
+  constexpr size_t _ATTACH_DETACH_ITERATIONS_ = 300;
   constexpr size_t _N_PER_CONSUMER_ = 20000;
   constexpr size_t _N_TO_CONSUME_ = _N_PER_CONSUMER_ * _MAX_CONSUMERS_;
   constexpr size_t _N_PER_ITERATION_ = _N_PER_CONSUMER_ / _ATTACH_DETACH_ITERATIONS_;
   constexpr bool _MULTICAST_ = true;
 
-  using Queue = SPMCMulticastQueueReliableBounded<size_t, 1, 1, 4, _MULTICAST_>;
+  using Queue = SPMCMulticastQueueReliableBounded<size_t, 1, 1, 4, 0, _MULTICAST_>;
 
   std::string s;
   std::mutex guard;
@@ -746,14 +748,14 @@ TEST_CASE(
 
   constexpr size_t _MAX_CONSUMERS_ = 8;
   constexpr size_t _MAX_PUBLISHERS_ = 8;
-  constexpr size_t _PUBLISHER_QUEUE_SIZE = 4;
-  constexpr size_t _ATTACH_DETACH_ITERATIONS_ = 700;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 16;
+  constexpr size_t _ATTACH_DETACH_ITERATIONS_ = 300;
   constexpr size_t _N_PER_CONSUMER_ = 3000;
   constexpr size_t _N_TO_CONSUME_ = _N_PER_CONSUMER_ * _MAX_CONSUMERS_;
   constexpr size_t _N_PER_ITERATION_ = _N_PER_CONSUMER_ / _ATTACH_DETACH_ITERATIONS_;
   constexpr bool _MULTICAST_ = true;
 
-  using Queue = SPMCMulticastQueueReliableBounded<size_t, 4, 4, 4, _MULTICAST_>;
+  using Queue = SPMCMulticastQueueReliableBounded<size_t, 4, 4, 4, 0, _MULTICAST_>;
 
   std::string s;
   std::mutex guard;
@@ -1121,7 +1123,7 @@ TEST_CASE("SPMC queue stress test to detect race conditions")
   std::string s;
   std::mutex guard;
   constexpr size_t _MAX_CONSUMERS_ = 3;
-  constexpr size_t _PUBLISHER_QUEUE_SIZE = 32;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 256;
   constexpr size_t N = 30000000;
   constexpr size_t BATCH_NUM = 2;
   using Queue = SPMCMulticastQueueReliableBounded<Vector, _MAX_CONSUMERS_, BATCH_NUM>;

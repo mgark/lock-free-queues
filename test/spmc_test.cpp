@@ -25,7 +25,7 @@
 TEST_CASE("SPMC functional test")
 {
   using Queue = SPMCMulticastQueueReliableBounded<Order, 2>;
-  Queue q(8);
+  Queue q(16);
 
   constexpr bool blocking = true;
   ConsumerBlocking<Queue> c1;
@@ -51,7 +51,7 @@ TEST_CASE("SPMC functional test - re-use bit")
   using MsgType = integral_msb_always_0<uint32_t>;
   using Queue = SPMCMulticastQueueReliableBounded<MsgType, 2>;
 
-  Queue q(8);
+  Queue q(1024);
 
   constexpr bool blocking = true;
   ConsumerBlocking<Queue> c1;
@@ -77,7 +77,7 @@ TEST_CASE("SPMC functional test - Blocking Peek and Skip")
   using MsgType = uint32_t;
   using Queue = SPMCMulticastQueueReliableBounded<MsgType, 2>;
 
-  Queue q(8);
+  Queue q(1024);
 
   constexpr bool blocking = true;
   ConsumerBlocking<Queue> c1;
@@ -123,7 +123,7 @@ TEST_CASE("SPMC functional test - Non-Blocking Peek and Skip")
   using MsgType = uint32_t;
   using Queue = SPMCMulticastQueueReliableBounded<MsgType, 2>;
 
-  Queue q(8);
+  Queue q(1024);
 
   constexpr bool blocking = true;
   ConsumerNonBlocking<Queue> c1;
