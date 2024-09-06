@@ -54,7 +54,7 @@ private:
 
   struct ProducerContext
   {
-    alignas(_CACHE_LINE_SIZE_) std::atomic<size_t> producer_idx_;
+    alignas(_CACHE_PREFETCH_SIZE_) std::atomic<size_t> producer_idx_;
 
     ProducerContext() { producer_idx_.store(0, std::memory_order_release); }
 

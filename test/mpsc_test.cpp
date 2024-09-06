@@ -22,8 +22,8 @@
 TEST_CASE("MPSC functional test")
 {
   using Queue = SPMCMulticastQueueReliableBounded<Order, 2, 2>;
-  Queue q1(8);
-  Queue q2(8);
+  Queue q1(16);
+  Queue q2(16);
 
   ConsumerBlocking<Queue> c1[2] = {q1, q2};
   ProducerBlocking<Queue> p1;

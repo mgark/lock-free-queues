@@ -31,18 +31,18 @@
 #include <utility>
 
 template <class Queue>
-class alignas(_CACHE_LINE_SIZE_) ConsumerBase
+class alignas(_CACHE_PREFETCH_SIZE_) ConsumerBase
 {
 protected:
-  Queue* q_;
-  size_t n_;
   size_t consumer_next_idx_;
+  size_t idx_mask_;
+  size_t consumer_id_;
   typename Queue::version_type previous_version_;
   size_t next_checkout_point_idx_;
   mutable size_t min_next_producer_idx_;
-  size_t idx_mask_;
-  size_t consumer_id_;
   size_t items_per_batch_;
+  size_t n_;
+  Queue* q_;
   mutable size_t queue_idx_;
 #ifdef _ADDITIONAL_TRACE_
   typename Queue::ConsumerTicket original_ticket;
@@ -374,7 +374,7 @@ struct ConsumerNonBlocking : ConsumerBase<Queue>
 
 // TODO: how to ensure consumer group cannot out-live the queues themselves?
 template <class Queue, size_t MAX_SIZE = 8>
-struct alignas(_CACHE_LINE_SIZE_) AnycastConsumerGroup
+struct alignas(_CACHE_PREFETCH_SIZE_) AnycastConsumerGroup
 {
   using T = typename Queue::type;
   using ConsumerType = ConsumerNonBlocking<Queue>;
@@ -470,7 +470,7 @@ struct alignas(_CACHE_LINE_SIZE_) AnycastConsumerGroup
 };
 
 template <class Queue>
-class alignas(_CACHE_LINE_SIZE_) AnycastConsumerBlocking
+class alignas(_CACHE_PREFETCH_SIZE_) AnycastConsumerBlocking
 {
   using ConsumerGroupType = AnycastConsumerGroup<Queue>;
   size_t current_queue_idx_{0};
@@ -585,7 +585,7 @@ private:
 };
 
 template <class Queue>
-class alignas(_CACHE_LINE_SIZE_) AnycastConsumerNonBlocking
+class alignas(_CACHE_PREFETCH_SIZE_) AnycastConsumerNonBlocking
 {
   using ConsumerGroupType = AnycastConsumerGroup<Queue>;
   size_t current_queue_idx_{0};

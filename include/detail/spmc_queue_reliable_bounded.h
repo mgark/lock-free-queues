@@ -42,7 +42,7 @@ public:
                                       _BATCH_NUM_, _CPU_PAUSE_N_, _MULTICAST_, Allocator, VersionType>;
   using Base::_binary_version_;
   using Base::_cache_line_num_;
-  using Base::_item_per_cache_line_num_;
+  using Base::_item_per_prefetch_num_;
   using Base::_remap_index_;
   using Base::_reuse_single_bit_from_object_;
   using Base::_spsc_;
@@ -59,10 +59,9 @@ private:
 
   struct ConsumerContext
   {
-    alignas(_CACHE_LINE_SIZE_) std::atomic<size_t> consumer_idx_;
-    alignas(_CACHE_LINE_SIZE_) Me& host_;
+    alignas(_CACHE_PREFETCH_SIZE_) std::atomic<size_t> consumer_idx_;
 
-    struct alignas(_CACHE_LINE_SIZE_) ConsumerProgress
+    struct alignas(_CACHE_PREFETCH_SIZE_) ConsumerProgress
     {
       std::atomic<size_t> idx;
       std::atomic<VersionType> previous_version;
@@ -73,14 +72,14 @@ private:
 
     using ConsumerProgressType = ConsumerProgressArray;
     // std::conditional_t<_MAX_CONSUMER_N_ == 1, ConsumerProgress, ConsumerProgressArray>;
-    alignas(_CACHE_LINE_SIZE_) ConsumerProgressType consumers_progress_;
-    alignas(_CACHE_LINE_SIZE_) ConsumerRegistryArray consumers_registry_;
+    ConsumerProgressType consumers_progress_;
+    ConsumerRegistryArray consumers_registry_;
 
     // these variables change somewhat infrequently, it got type int to account for race
     // conditions where producers would see first indication of a consumer joining before increment of this variable
-    alignas(_CACHE_LINE_SIZE_) std::atomic<int> consumers_pending_attach_;
+    alignas(_CACHE_PREFETCH_SIZE_) std::atomic<int> consumers_pending_attach_;
 
-    ConsumerContext(Me& host) : consumer_idx_(0), host_(host), consumers_pending_attach_(0)
+    ConsumerContext() : consumer_idx_(0), consumers_pending_attach_(0)
     {
       if constexpr (_MAX_CONSUMER_N_ == 1)
       {
@@ -154,17 +153,16 @@ private:
 
   struct ProducerContext
   {
-    struct alignas(_CACHE_LINE_SIZE_) ProducerProgress
+    struct alignas(_CACHE_PREFETCH_SIZE_) ProducerProgress
     {
       std::atomic<size_t> idx;
     };
 
-    alignas(_CACHE_LINE_SIZE_) std::atomic<size_t> producer_idx_;
-    alignas(_CACHE_LINE_SIZE_) std::array<ProducerProgress, _MAX_PRODUCER_N_> producer_progress_;
-    alignas(_CACHE_LINE_SIZE_) std::array<std::atomic<bool>, _MAX_PRODUCER_N_> producer_registry_;
-    alignas(_CACHE_LINE_SIZE_) Me& host_;
+    alignas(_CACHE_PREFETCH_SIZE_) std::atomic<size_t> producer_idx_;
+    std::array<ProducerProgress, _MAX_PRODUCER_N_> producer_progress_;
+    std::array<std::atomic<bool>, _MAX_PRODUCER_N_> producer_registry_;
 
-    ProducerContext(Me& host) : host_(host)
+    ProducerContext()
     {
       for (auto it = std::begin(producer_progress_); it != std::end(producer_progress_); ++it)
         it->idx.store(PRODUCER_IS_WELCOME, std::memory_order_release);
@@ -240,7 +238,7 @@ public:
   using Base::stop;
 
   SPMCMulticastQueueReliableBounded(std::size_t N, const Allocator& alloc = Allocator())
-    : Base(N, alloc), producer_ctx_(*this), consumer_ctx_(*this), next_max_consumer_id_(0), next_max_producer_id_(0)
+    : Base(N, alloc), next_max_consumer_id_(0), next_max_producer_id_(0)
   {
   }
 
@@ -692,7 +690,7 @@ public:
     size_t node_idx;
     if constexpr (_remap_index_)
     {
-      node_idx = map_index<_item_per_cache_line_num_, _cache_line_num_>(original_idx) & this->idx_mask_;
+      node_idx = map_index<_item_per_prefetch_num_, _cache_line_num_>(original_idx) & this->idx_mask_;
     }
     else
     {

@@ -134,7 +134,7 @@ TEST_CASE(
   std::string s;
   std::mutex guard;
   constexpr size_t _MAX_CONSUMERS_ = 1;
-  constexpr size_t _PUBLISHER_QUEUE_SIZE = 64;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 256;
   constexpr size_t N = 10'000'000;
   constexpr size_t ATTACH_DETACH_ITERATIONS = 20000;
   constexpr size_t CONSUMED_PER_ITERATION = N / ATTACH_DETACH_ITERATIONS / 100;
@@ -244,7 +244,7 @@ TEST_CASE("Bounded blocking reliable multicast SPMC attach detach & stress test"
   std::string s;
   std::mutex guard;
   constexpr size_t _MAX_CONSUMERS_ = 8;
-  constexpr size_t _PUBLISHER_QUEUE_SIZE = 256;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
   constexpr size_t N_PER_CONSUMER = 10000;
   constexpr size_t ATTACH_DETACH_ITERATIONS = 1000;
   constexpr size_t CONSUMED_PER_ITERATION = N_PER_CONSUMER / ATTACH_DETACH_ITERATIONS;
@@ -362,7 +362,7 @@ TEST_CASE("Bounded blocking reliable anycast MPMC attach detach & stress test")
 
   constexpr size_t _MAX_CONSUMERS_ = 8;
   constexpr size_t _MAX_PUBLISHERS_ = 8;
-  constexpr size_t _PUBLISHER_QUEUE_SIZE = 128;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 1024;
   constexpr size_t _ATTACH_DETACH_ITERATIONS_ = 300;
   constexpr size_t _N_PER_ITERATION_ = 3;
   constexpr size_t _N_TO_CONSUME_ = _N_PER_ITERATION_ * _ATTACH_DETACH_ITERATIONS_ * _MAX_CONSUMERS_;
@@ -479,7 +479,7 @@ TEST_CASE("Bounded blocking reliable anycast MPSC attach detach & stress test")
 
   constexpr size_t _MAX_CONSUMERS_ = 1;
   constexpr size_t _MAX_PUBLISHERS_ = 8;
-  constexpr size_t _PUBLISHER_QUEUE_SIZE = 128;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 256;
   constexpr size_t _ATTACH_DETACH_ITERATIONS_ = 40000;
   constexpr size_t _N_PER_ITERATION_ = 513;
   constexpr size_t _N_TO_CONSUME_ = _N_PER_ITERATION_ * _ATTACH_DETACH_ITERATIONS_ * _MAX_CONSUMERS_;
@@ -748,7 +748,7 @@ TEST_CASE(
 
   constexpr size_t _MAX_CONSUMERS_ = 8;
   constexpr size_t _MAX_PUBLISHERS_ = 8;
-  constexpr size_t _PUBLISHER_QUEUE_SIZE = 16;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 256;
   constexpr size_t _ATTACH_DETACH_ITERATIONS_ = 300;
   constexpr size_t _N_PER_CONSUMER_ = 3000;
   constexpr size_t _N_TO_CONSUME_ = _N_PER_CONSUMER_ * _MAX_CONSUMERS_;

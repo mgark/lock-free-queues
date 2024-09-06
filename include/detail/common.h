@@ -195,6 +195,7 @@ size_t map_index(size_t original_idx)
 }
 
 static constexpr size_t _CACHE_LINE_SIZE_ = 64;
+static constexpr size_t _CACHE_PREFETCH_SIZE_ = 128;
 
 #define _DISABLE_UNRELIABLE_MULTICAST_TEST_
 //#define _DISABLE_ADAPTIVE_QUEUE_TEST_

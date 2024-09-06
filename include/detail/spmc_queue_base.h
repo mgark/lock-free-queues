@@ -38,9 +38,9 @@ public:
   static constexpr bool _reuse_single_bit_from_object_ = msb_always_0<T> && not _synchronized_consumer_;
   static constexpr bool _versionless_ = not _synchronized_producer_;
   static constexpr bool _binary_version_ = not _versionless_ and not _synchronized_consumer_;
-  static constexpr bool _remap_index_ =
-    sizeof(T) <= _CACHE_LINE_SIZE_ and (_synchronized_producer_ or _MAX_CONSUMER_N_ > 1);
-  static constexpr size_t _storage_alignment_ = _remap_index_ ? power_of_2_far(sizeof(T)) : alignof(T);
+  static constexpr bool _remap_index_ = sizeof(T) <= _CACHE_LINE_SIZE_ and (not _spsc_);
+  static constexpr size_t _storage_alignment_ =
+    (_remap_index_ || not _spsc_) ? power_of_2_far(sizeof(T)) : alignof(T);
 
   struct ConsumerTicket
   {
@@ -91,13 +91,13 @@ protected:
   std::atomic<QueueState> state_{QueueState::Created};
 
 public:
-  static constexpr size_t _item_per_cache_line_num_ = 64 / sizeof(Node);
+  static constexpr size_t _item_per_prefetch_num_ = 2 * (_CACHE_PREFETCH_SIZE_ / sizeof(Node));
   static constexpr size_t _cache_line_num_ =
-    power_of_2_far(std::max(_MAX_PRODUCER_N_, _item_per_cache_line_num_));
-  static constexpr size_t _contention_window_size_ = _cache_line_num_ * _item_per_cache_line_num_;
+    power_of_2_far(std::max(_MAX_PRODUCER_N_, _item_per_prefetch_num_));
+  static constexpr size_t _contention_window_size_ = _cache_line_num_ * _item_per_prefetch_num_;
 
   static_assert((_cache_line_num_ & (_cache_line_num_ - 1)) == 0);
-  static_assert((_item_per_cache_line_num_ & (_item_per_cache_line_num_ - 1)) == 0);
+  static_assert((_item_per_prefetch_num_ & (_item_per_prefetch_num_ - 1)) == 0);
 
   SPMCMulticastQueueBase(std::size_t N, const Allocator& alloc = Allocator())
     : n_(N), power_of_two_idx_(log2(n_)), items_per_batch_(n_ / _BATCH_NUM_), idx_mask_(n_ - 1), alloc_(alloc)
@@ -181,7 +181,7 @@ public:
     size_t node_idx;
     if constexpr (_remap_index_)
     {
-      node_idx = map_index<_item_per_cache_line_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
+      node_idx = map_index<_item_per_prefetch_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
     }
     else
     {
@@ -225,6 +225,10 @@ public:
       }
       if (r == ConsumeReturnCode::Consumed)
         return r;
+      else
+      {
+        unroll<_CPU_PAUSE_N_>([]() { _mm_pause(); });
+      }
 
       state = this->state_.load(std::memory_order_acquire);
     } while (state == QueueState::Running && r == ConsumeReturnCode::NothingToConsume);
@@ -244,7 +248,7 @@ public:
     size_t node_idx;
     if constexpr (_remap_index_)
     {
-      node_idx = map_index<_item_per_cache_line_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
+      node_idx = map_index<_item_per_prefetch_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
     }
     else
     {
@@ -313,7 +317,7 @@ public:
     size_t node_idx;
     if constexpr (_remap_index_)
     {
-      node_idx = map_index<_item_per_cache_line_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
+      node_idx = map_index<_item_per_prefetch_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
     }
     else
     {
@@ -361,7 +365,7 @@ public:
         return r;
       else
       {
-        // _mm_pause();
+        unroll<_CPU_PAUSE_N_>([]() { _mm_pause(); });
       }
 
       state = this->state_.load(std::memory_order_acquire);
@@ -383,7 +387,7 @@ public:
     size_t node_idx;
     if constexpr (_remap_index_)
     {
-      node_idx = map_index<_item_per_cache_line_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
+      node_idx = map_index<_item_per_prefetch_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
     }
     else
     {
@@ -446,7 +450,7 @@ public:
     size_t node_idx;
     if constexpr (_remap_index_)
     {
-      node_idx = map_index<_item_per_cache_line_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
+      node_idx = map_index<_item_per_prefetch_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
     }
     else
     {
@@ -504,7 +508,7 @@ public:
     size_t node_idx;
     if constexpr (_remap_index_)
     {
-      node_idx = map_index<_item_per_cache_line_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
+      node_idx = map_index<_item_per_prefetch_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
     }
     else
     {
@@ -550,7 +554,7 @@ public:
     size_t node_idx;
     if constexpr (_remap_index_)
     {
-      node_idx = map_index<_item_per_cache_line_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
+      node_idx = map_index<_item_per_prefetch_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
     }
     else
     {
@@ -586,6 +590,10 @@ public:
       }
       if (ConsumeReturnCode::Consumed == r)
         return r;
+      else
+      {
+        unroll<_CPU_PAUSE_N_>([]() { _mm_pause(); });
+      }
 
       state = this->state_.load(std::memory_order_acquire);
     } while (state == QueueState::Running && r == ConsumeReturnCode::NothingToConsume);
@@ -603,7 +611,7 @@ public:
     size_t node_idx;
     if constexpr (_remap_index_)
     {
-      node_idx = map_index<_item_per_cache_line_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
+      node_idx = map_index<_item_per_prefetch_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
     }
     else
     {

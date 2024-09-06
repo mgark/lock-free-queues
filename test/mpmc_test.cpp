@@ -22,8 +22,8 @@
 TEST_CASE("MPMC functional test")
 {
   using Queue = SPMCMulticastQueueReliableBounded<Order, 2, 2>;
-  Queue q1(8);
-  Queue q2(8);
+  Queue q1(32);
+  Queue q2(32);
 
   constexpr bool blocking = true;
   ConsumerBlocking<Queue> c1[2] = {q1, q2};
@@ -54,8 +54,8 @@ TEST_CASE("MPMC functional test")
 TEST_CASE("MPMC Anycasy Blocking consumer functional test")
 {
   using Queue = SPMCMulticastQueueReliableBounded<Order, 2, 2>;
-  Queue q1(8);
-  Queue q2(8);
+  Queue q1(32);
+  Queue q2(32);
 
   ProducerBlocking<Queue> p1(q1);
   ProducerBlocking<Queue> p2(q2);
@@ -119,8 +119,8 @@ TEST_CASE("MPMC Anycasy Blocking consumer functional test")
 TEST_CASE("MPMC Anycasy Non-Blocking consumer functional test")
 {
   using Queue = SPMCMulticastQueueReliableBounded<Order, 2, 2>;
-  Queue q1(8);
-  Queue q2(8);
+  Queue q1(32);
+  Queue q2(32);
 
   ProducerBlocking<Queue> p1(q1);
   ProducerBlocking<Queue> p2(q2);
@@ -184,7 +184,7 @@ TEST_CASE("MPMC Anycasy Non-Blocking consumer functional test")
 TEST_CASE("Synchronized Blocking MPMC functional test")
 {
   using Queue = SPMCMulticastQueueReliableBounded<Order, 2, 2>;
-  Queue q1(8);
+  Queue q1(32);
 
   constexpr bool blocking = true;
   ConsumerBlocking<Queue> c1{q1};
@@ -215,7 +215,7 @@ TEST_CASE("Synchronized Blocking MPMC functional test")
 TEST_CASE("Synchronized Non-Blocking MPMC functional test")
 {
   using Queue = SPMCMulticastQueueReliableBounded<Order, 2, 2, 2>;
-  size_t N = 8;
+  size_t N = 32;
   Queue q1(N);
 
   constexpr bool blocking = true;
@@ -281,7 +281,7 @@ TEST_CASE(
   constexpr bool _MULTICAST_ = false;
 
   constexpr bool blocking = true;
-  size_t N = 8;
+  size_t N = 32;
   using Queue = SPMCMulticastQueueReliableBounded<Order, 2, 2, 2, 0, _MULTICAST_>;
   Queue q1(N);
 
@@ -329,7 +329,7 @@ TEST_CASE("MPMC functional test - Blocking Peek and Skip")
   using MsgType = uint32_t;
   using Queue = SPMCMulticastQueueReliableBounded<MsgType, 2, 2>;
 
-  Queue q(64);
+  Queue q(512);
 
   constexpr bool blocking = true;
   ConsumerBlocking<Queue> c1;
