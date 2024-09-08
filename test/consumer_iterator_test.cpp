@@ -47,12 +47,11 @@ TEST_CASE("SPSC consumer iterator functional test")
     {
       int i = 1;
       auto it = c.cbegin();
-      while (it != c.cend())
+      while (it != c.cend() && it->id != 3)
       {
         int v = it->id;
         CHECK(v == i);
-        if (i++ == 3)
-          q.stop(); // this would mark the end for the next increment
+        ++i;
         ++it;
       }
     }

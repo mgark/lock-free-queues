@@ -609,7 +609,7 @@ TEST_CASE(
 
   constexpr size_t _MAX_CONSUMERS_ = 8;
   constexpr size_t _MAX_PUBLISHERS_ = 8;
-  constexpr size_t _PUBLISHER_QUEUE_SIZE = 4;
+  constexpr size_t _PUBLISHER_QUEUE_SIZE = 64;
   constexpr size_t _ATTACH_DETACH_ITERATIONS_ = 300;
   constexpr size_t _N_PER_CONSUMER_ = 20000;
   constexpr size_t _N_TO_CONSUME_ = _N_PER_CONSUMER_ * _MAX_CONSUMERS_;

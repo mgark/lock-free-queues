@@ -34,16 +34,30 @@ template <class Queue>
 class alignas(_CACHE_PREFETCH_SIZE_) ConsumerBase
 {
 protected:
+  mutable size_t min_next_producer_idx_;
   size_t consumer_next_idx_;
+  size_t next_checkout_point_idx_;
+  typename Queue::version_type previous_version_;
+  size_t items_per_batch_;
   size_t idx_mask_;
   size_t consumer_id_;
-  typename Queue::version_type previous_version_;
-  size_t next_checkout_point_idx_;
-  mutable size_t min_next_producer_idx_;
-  size_t items_per_batch_;
   size_t n_;
   Queue* q_;
   mutable size_t queue_idx_;
+
+  using NodeType = typename Queue::Node;
+
+  struct BatchContext
+  {
+    static constexpr size_t _batch_buffer_size_ = 256 / sizeof(NodeType);
+    static constexpr size_t _items_per_cache_prefetch_num_ = _CACHE_PREFETCH_SIZE_ / sizeof(NodeType);
+
+    alignas(NodeType) std::byte batch_buffer_[_batch_buffer_size_ * sizeof(NodeType)];
+    size_t batch_buffer_idx_{std::numeric_limits<size_t>::max()};
+  };
+
+  using BatchContextType = std::conditional_t<Queue::_batch_consumption_enabled_, BatchContext, VoidType>;
+  BatchContextType batch_ctx_;
 #ifdef _ADDITIONAL_TRACE_
   typename Queue::ConsumerTicket original_ticket;
 #endif

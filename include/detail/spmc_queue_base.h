@@ -32,15 +32,20 @@ class SPMCMulticastQueueBase
 {
 public:
   using type = T;
+  static constexpr size_t CPU_PAUSE_N = _CPU_PAUSE_N_;
   static constexpr bool _synchronized_consumer_ = _MAX_CONSUMER_N_ > 1 && !_MULTICAST_;
   static constexpr bool _synchronized_producer_ = _MAX_PRODUCER_N_ > 1;
   static constexpr bool _spsc_ = _MAX_PRODUCER_N_ == 1 and _MAX_CONSUMER_N_ == 1;
-  static constexpr bool _reuse_single_bit_from_object_ = msb_always_0<T> && not _synchronized_consumer_;
+  // static constexpr bool _reuse_single_bit_from_object_ = msb_always_0<T> && not _synchronized_consumer_;
   static constexpr bool _versionless_ = not _synchronized_producer_;
   static constexpr bool _binary_version_ = not _versionless_ and not _synchronized_consumer_;
-  static constexpr bool _remap_index_ = sizeof(T) <= _CACHE_LINE_SIZE_ and (not _spsc_);
-  static constexpr size_t _storage_alignment_ =
-    (_remap_index_ || not _spsc_) ? power_of_2_far(sizeof(T)) : alignof(T);
+
+  static constexpr bool _memcpyable_ =
+    std::is_trivially_copyable_v<T> && std::is_trivially_destructible_v<T>;
+  static constexpr bool _batch_consumption_enabled_ = _memcpyable_ && _versionless_ && not _synchronized_consumer_;
+  static constexpr bool _remap_index_ = sizeof(T) <= _CACHE_LINE_SIZE_ and (not _batch_consumption_enabled_);
+
+  static constexpr size_t _storage_alignment_ = (_remap_index_) ? power_of_2_far(sizeof(T)) : alignof(T);
 
   struct ConsumerTicket
   {
@@ -158,7 +163,7 @@ public:
   }
   bool is_running() const
   {
-    return this->state_.load(std::memory_order_acquire) == QueueState::Running;
+    return this->state_.load(std::memory_order_relaxed) == QueueState::Running;
   }
 
   void start()
@@ -210,6 +215,7 @@ public:
         VersionType version = node.version_.load(std::memory_order_acquire);
         if constexpr (_synchronized_consumer_)
         {
+          version = node.version_.load(std::memory_order_acquire);
           r = static_cast<Derived&>(*this).consume_by_func(
             idx, queue_idx, node, version, expected_version, consumer,
             [dest](void* storage)
@@ -464,14 +470,16 @@ public:
       expected_version = 1 + div_by_power_of_two(idx, power_of_two_idx_);
     }
 
-    bool running = false;
+    // if (!this->is_running())
+    //   return nullptr;
+
     Node& node = this->nodes_[node_idx];
     const T* r;
-    do
+    for (;;)
     {
       if constexpr (_versionless_)
       {
-        r = peek(queue_idx, node, consumer.consumer_next_idx_, consumer);
+        r = peek(queue_idx, node, original_idx, consumer);
       }
       else
       {
@@ -493,9 +501,7 @@ public:
       {
         unroll<_CPU_PAUSE_N_>([]() { _mm_pause(); });
       }
-
-      running = this->is_running();
-    } while (running);
+    }
     return nullptr;
   }
 
@@ -523,7 +529,6 @@ public:
     }
 
     const T* r;
-    bool running = false;
     Node& node = this->nodes_[node_idx];
     if constexpr (_versionless_)
     {

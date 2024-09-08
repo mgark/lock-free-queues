@@ -26,7 +26,7 @@
 #include <unordered_set>
 
 template <class Queue, class Derived>
-class ProducerBase
+class alignas(_CACHE_PREFETCH_SIZE_) ProducerBase
 {
 protected:
   Queue* q_{nullptr};

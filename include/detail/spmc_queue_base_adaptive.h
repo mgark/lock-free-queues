@@ -78,6 +78,7 @@ protected:
   std::atomic<QueueState> state_{QueueState::Created};
 
 public:
+  static constexpr bool _batch_consumption_enabled_ = false;
   SPMCMulticastQueueAdaptiveBase(std::size_t initial_sz, std::size_t max_sz, const Allocator& alloc = Allocator())
     : initial_sz_(initial_sz),
       current_sz_(initial_sz_),

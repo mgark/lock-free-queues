@@ -97,6 +97,10 @@ constexpr size_t PRODUCER_JOIN_INPROGRESS = PRODUCER_JOIN_REQUESTED - 2;
 constexpr size_t PRODUCER_JOINED = PRODUCER_JOIN_INPROGRESS - 3;
 constexpr size_t NEXT_PRODUCER_IDX_NEEDED = PRODUCER_JOINED - 4;
 
+struct VoidType
+{
+};
+
 class QueueStoppedExp : public std::exception
 {
 };

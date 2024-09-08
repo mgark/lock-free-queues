@@ -32,7 +32,7 @@
 
 template <class T, size_t _MAX_CONSUMER_N_ = 8, size_t _MAX_PRODUCER_N_ = 1, size_t _BATCH_NUM_ = 4,
           size_t _CPU_PAUSE_N_ = 0, bool _MULTICAST_ = true, class Allocator = std::allocator<T>,
-          class VersionType = std::conditional_t<((!_MULTICAST_ && (_MAX_CONSUMER_N_ > 1)) || _MAX_PRODUCER_N_ > 1u), size_t, uint8_t>>
+          class VersionType = std::conditional_t<(!_MULTICAST_ && (_MAX_CONSUMER_N_ > 1)), size_t, uint8_t>>
 class SPMCMulticastQueueReliableBounded
   : public SPMCMulticastQueueBase<T, SPMCMulticastQueueReliableBounded<T, _MAX_CONSUMER_N_, _MAX_PRODUCER_N_, _BATCH_NUM_, _CPU_PAUSE_N_, _MULTICAST_, Allocator>,
                                   _MAX_CONSUMER_N_, _MAX_PRODUCER_N_, _BATCH_NUM_, _CPU_PAUSE_N_, _MULTICAST_, Allocator, VersionType>
@@ -40,11 +40,12 @@ class SPMCMulticastQueueReliableBounded
 public:
   using Base = SPMCMulticastQueueBase<T, SPMCMulticastQueueReliableBounded, _MAX_CONSUMER_N_, _MAX_PRODUCER_N_,
                                       _BATCH_NUM_, _CPU_PAUSE_N_, _MULTICAST_, Allocator, VersionType>;
+  using Base::_batch_consumption_enabled_;
   using Base::_binary_version_;
   using Base::_cache_line_num_;
   using Base::_item_per_prefetch_num_;
   using Base::_remap_index_;
-  using Base::_reuse_single_bit_from_object_;
+  // using Base::_reuse_single_bit_from_object_;
   using Base::_spsc_;
   using Base::_synchronized_consumer_;
   using Base::_synchronized_producer_;
@@ -77,7 +78,7 @@ private:
 
     // these variables change somewhat infrequently, it got type int to account for race
     // conditions where producers would see first indication of a consumer joining before increment of this variable
-    alignas(_CACHE_PREFETCH_SIZE_) std::atomic<int> consumers_pending_attach_;
+    std::atomic<int> consumers_pending_attach_;
 
     ConsumerContext() : consumer_idx_(0), consumers_pending_attach_(0)
     {
@@ -217,11 +218,11 @@ private:
     }
   };
 
-  ProducerContext producer_ctx_;
   ConsumerContext consumer_ctx_;
+  ProducerContext producer_ctx_;
 
-  std::atomic<size_t> next_max_consumer_id_;
-  std::atomic<size_t> next_max_producer_id_;
+  alignas(_CACHE_PREFETCH_SIZE_) std::atomic<size_t> next_max_consumer_id_;
+  alignas(_CACHE_PREFETCH_SIZE_) std::atomic<size_t> next_max_producer_id_;
 
 public:
   using version_type = VersionType;
@@ -928,7 +929,43 @@ public:
   }
 
   template <class C>
-  const T* peek(Node& node, size_t idx, C& consumer) requires(_versionless_)
+  const T* peek(Node& node, size_t idx, C& consumer) requires(_versionless_&& _batch_consumption_enabled_)
+  {
+    if (consumer.batch_ctx_.batch_buffer_idx_ < C::BatchContext::_batch_buffer_size_)
+    {
+      return std::launder(reinterpret_cast<T*>(
+        &consumer.batch_ctx_.batch_buffer_[(consumer.batch_ctx_.batch_buffer_idx_++) * sizeof(Node)]));
+    }
+
+    size_t producer_idx = consumer.get_min_next_cached_producer_idx();
+    if (producer_idx <= idx)
+    {
+      // let's try to pull the latest min producer idx
+      producer_idx = calc_min_next_producer_idx();
+      consumer.set_min_next_cached_producer_idx(producer_idx);
+      if (producer_idx <= idx)
+      {
+        return nullptr;
+      }
+    }
+
+    size_t items_ready_num = producer_idx - idx;
+    if (items_ready_num >= C::BatchContext::_batch_buffer_size_)
+    {
+      std::memcpy(&consumer.batch_ctx_.batch_buffer_, &node,
+                  C::BatchContext::_batch_buffer_size_ * sizeof(Node));
+      consumer.batch_ctx_.batch_buffer_idx_ = 0;
+      return std::launder(reinterpret_cast<T*>(
+        &consumer.batch_ctx_.batch_buffer_[(consumer.batch_ctx_.batch_buffer_idx_++) * sizeof(Node)]));
+    }
+    else
+    {
+      return reinterpret_cast<const T*>(node.storage_);
+    }
+  }
+
+  template <class C>
+  const T* peek(Node& node, size_t idx, C& consumer) requires(_versionless_ && not _batch_consumption_enabled_)
   {
     size_t producer_idx = consumer.get_min_next_cached_producer_idx();
     if (producer_idx <= idx)

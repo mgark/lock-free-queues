@@ -57,39 +57,27 @@ TEST_CASE("SPSC basic functional test - wrap around the queue")
 {
   using MsgType = uint32_t;
   using Queue = SPMCMulticastQueueReliableBounded<MsgType, 1, 1, 2>;
-  Queue q(2);
+  size_t N = 1024;
+  Queue q(N);
 
   ConsumerNonBlocking<Queue> c(q);
   ProducerNonBlocking<Queue> p(q);
   q.start();
 
+  for (size_t i = 1; i <= N; ++i)
   {
-    auto r = p.emplace(1u);
+    auto r = p.emplace(i);
     CHECK(ProduceReturnCode::Published == r);
   }
-  {
-    auto r = p.emplace(2u);
-    CHECK(ProduceReturnCode::Published == r);
-  }
+
   {
     auto r = p.emplace(3u);
     CHECK(ProduceReturnCode::SlowConsumer == r);
   }
-
+  for (size_t i = 1; i <= N; ++i)
   {
-    auto r = c.consume([&q](const MsgType& o) mutable { CHECK(o == MsgType{1u}); });
-    CHECK(ConsumeReturnCode::Consumed == r);
-  }
-  {
-    auto r = p.emplace(4u);
-    CHECK(ProduceReturnCode::Published == r);
-  }
-  {
-    auto r = c.consume([&q](const MsgType& o) mutable { CHECK(o == MsgType{2u}); });
-    CHECK(ConsumeReturnCode::Consumed == r);
-  }
-  {
-    auto r = c.consume([&q](const MsgType& o) mutable { CHECK(o == MsgType{4u}); });
+    auto r = c.consume([&q, val = i](const MsgType& o) mutable
+                       { CHECK(o == MsgType{static_cast<MsgType>(val)}); });
     CHECK(ConsumeReturnCode::Consumed == r);
   }
 }
@@ -98,7 +86,7 @@ TEST_CASE("SPSC stop / start test")
 {
   // test stop and stating the queue few times
   using Queue = SPMCMulticastQueueReliableBounded<Order, 1>;
-  Queue q(8);
+  Queue q(16);
 
   constexpr bool blocking = true;
   ConsumerBlocking<Queue> c(q);

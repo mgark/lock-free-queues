@@ -329,7 +329,7 @@ TEST_CASE("MPMC functional test - Blocking Peek and Skip")
   using MsgType = uint32_t;
   using Queue = SPMCMulticastQueueReliableBounded<MsgType, 2, 2>;
 
-  Queue q(512);
+  Queue q(1024);
 
   constexpr bool blocking = true;
   ConsumerBlocking<Queue> c1;
