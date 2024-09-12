@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <deque>
 #include <initializer_list>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -34,6 +35,7 @@ template <class Queue>
 class alignas(_CACHE_PREFETCH_SIZE_) ConsumerBase
 {
 protected:
+  std::atomic<bool> halted_;
   mutable size_t min_next_producer_idx_;
   size_t consumer_next_idx_;
   size_t next_checkout_point_idx_;
@@ -49,7 +51,7 @@ protected:
 
   struct BatchContext
   {
-    static constexpr size_t _batch_buffer_size_ = 256 / sizeof(NodeType);
+    static constexpr size_t _batch_buffer_size_ = _MEMCPY_OPTIMAL_BYTES_ / sizeof(NodeType);
     static constexpr size_t _items_per_cache_prefetch_num_ = _CACHE_PREFETCH_SIZE_ / sizeof(NodeType);
 
     alignas(NodeType) std::byte batch_buffer_[_batch_buffer_size_ * sizeof(NodeType)];
@@ -67,9 +69,11 @@ protected:
 
 public:
   using T = typename Queue::type;
+  using CT = const typename Queue::type;
+  using value_ptr = std::add_pointer_t<CT>;
 
-  ConsumerBase() : q_(nullptr) {}
-  ConsumerBase(Queue& q) : q_(nullptr)
+  ConsumerBase() : q_(nullptr), halted_(false) {}
+  ConsumerBase(Queue& q) : q_(nullptr), halted_(false)
   {
     if (ConsumerAttachReturnCode::Attached != attach(q))
     {
@@ -82,7 +86,8 @@ public:
 
   ConsumerAttachReturnCode attach(Queue& q) { return do_attach(std::to_address(&q)); }
 
-  bool detach()
+  // shall be called on the same thread where consumption is happening
+  __attribute__((noinline)) bool detach()
   {
     if (q_)
     {
@@ -102,7 +107,8 @@ public:
   size_t get_min_next_cached_producer_idx() const { return min_next_producer_idx_; }
   void set_min_next_cached_producer_idx(size_t val) const { min_next_producer_idx_ = val; }
 
-  bool is_stopped() const noexcept { return this->q_->is_stopped(); }
+  void halt() noexcept { return halted_.store(true, std::memory_order_release); }
+  bool is_halted() const noexcept { return halted_.load(std::memory_order_acquire); }
 
   bool empty() const { return this->q_->empty(this->queue_idx_, *this); }
 
@@ -157,6 +163,8 @@ protected:
         next_checkout_point_idx_ = ticket.items_per_batch +
           (consumer_next_idx_ - ticket.consumer_next_idx % ticket.items_per_batch);
       }
+
+      halted_.store(false, std::memory_order_release);
     }
 
     return ticket.ret_code;
@@ -166,190 +174,111 @@ protected:
 template <class Consumer>
 struct const_consumer_iterator
 {
+public:
+  using value_type = typename Consumer::CT;
+  using value_ptr = std::add_pointer_t<value_type>;
+
 private:
   Consumer* c_;
+  value_ptr v_;
+
+  static_assert(std::is_pointer_v<value_ptr>);
 
 public:
-  using value_type = typename Consumer::T;
-
   using iterator_category = std::input_iterator_tag;
   using difference_type = std::ptrdiff_t;
-  using pointer = const value_type*;
-  using reference = const value_type&;
+  using pointer = value_type;
+  using reference = value_type const&;
 
   struct proxy
   {
     value_type v;
-    value_type operator*() { return v; }
+    reference operator*() { return v; }
   };
 
-  const_consumer_iterator() noexcept : c_(nullptr) {}
+  const_consumer_iterator() noexcept : c_(nullptr), v_(nullptr) {}
   const_consumer_iterator(Consumer* c) noexcept : c_(c)
   {
-    if (nullptr == c_ || nullptr == c_->peek())
-    {
-      // nothing to consume, hence we reached the end
-      c_ = nullptr;
-    }
+    assert(c_);
+    v_ = c_->peek();
   }
+
+  explicit const_consumer_iterator(Consumer* c, value_ptr v) noexcept : c_(c), v_(v) {}
+
   const_consumer_iterator(const_consumer_iterator&& other) noexcept
-    : const_consumer_iterator(std::move(other).c_)
+    : const_consumer_iterator(std::move(other).c_, std::move(other).v_)
   {
     other.c_ = nullptr;
+    other.v_ = nullptr;
   }
   ~const_consumer_iterator() noexcept = default;
 
   const_consumer_iterator& operator=(const_consumer_iterator&& other) noexcept
   {
     c_ = std::move(other).c_;
+    v_ = std::move(other).v_;
+
     other.c_ = nullptr;
+    other.v_ = nullptr;
   }
 
   reference operator*() const
   {
-    auto* r = c_->peek();
-    if (r == nullptr)
-    {
-      throw std::runtime_error(
-        "item is not available through operator*() "
-        "as most likely queue has stopped or consumer became slow! You can query if consumer was "
-        "slow by calling is_slow_consumer func on the consumer object");
-    }
-    return *r;
+    assert(v_);
+    return *v_;
   }
 
-  pointer operator->()
-  {
-    auto* r = c_->peek();
-    if (r == nullptr)
-    {
-      throw std::runtime_error(
-        "item is not available through operator*() "
-        "as most likely queue has stopped or consumer became slow! You can query if consumer was "
-        "slow by calling is_slow_consumer func on the consumer object");
-    }
-    return r;
-  }
+  value_ptr operator->() const { return v_; }
 
   const_consumer_iterator& operator++()
   {
-    if constexpr (Consumer::blocking_v)
-    {
-      if (c_->skip() != ConsumeReturnCode::Consumed || nullptr == c_->peek())
-        c_ = nullptr; // reached the end! so effectively it is end iterator now
-    }
-    else
-    {
-      if (c_->skip() != ConsumeReturnCode::Consumed || c_->empty())
-        c_ = nullptr; // reached the end! so effectively it is end iterator now
-    }
-
+    c_->skip();
+    v_ = c_->peek();
     return *this;
   }
 
   proxy operator++(int) requires(std::is_copy_constructible_v<value_type> ||
                                  std::is_move_constructible_v<value_type>)
   {
-    auto* r = c_->peek();
-    if (r == nullptr)
-    {
-      throw std::runtime_error(
-        "item is not available through operator*() "
-        "as most likely queue has stopped or consumer became slow! You can query if consumer was "
-        "slow by calling is_slow_consumer func on the consumer object");
-    }
-
-    proxy v(std::move(*r));
-    if constexpr (Consumer::blocking_v)
-    {
-      // in blocking mode it is important to do peek after skip since you'd want to block until you've incremented
-      // and if increment failed because the queue has stopped than you can just compare the iterator to the end iterator
-      if (c_->skip() != ConsumeReturnCode::Consumed || c_->peek() != ConsumeReturnCode::Consumed)
-        c_ = nullptr; // reached the end! so effectively it is end iterator now
-    }
-    else
-    {
-      if (c_->skip() != ConsumeReturnCode::Consumed || c_->empty())
-        c_ = nullptr; // reached the end! so effectively it is end iterator now
-    }
+    proxy v(std::move(*v_));
+    c_->skip();
+    v_ = c_->peek();
     return v;
   }
 
-  friend bool operator==(const const_consumer_iterator& l, const const_consumer_iterator& r)
-  {
-    return l.c_ == r.c_;
-  }
-  friend bool operator!=(const const_consumer_iterator& l, const const_consumer_iterator& r)
-  {
-    return !operator==(l, r);
-  }
+  bool operator==(const const_consumer_iterator& r) { return v_ == r.v_; }
+  bool operator!=(const const_consumer_iterator& r) { return !this->operator==(r); }
 };
+
 template <class Queue>
 struct ConsumerBlocking : ConsumerBase<Queue>
 {
   using ConsumerBase<Queue>::ConsumerBase;
-  using T = typename Queue::type;
+  using ConsumerBase<Queue>::value_ptr;
   using const_iterator = const_consumer_iterator<ConsumerBlocking<Queue>>;
   static constexpr bool blocking_v = true;
 
+  static_assert(std::input_iterator<const_iterator>);
   const_iterator cbegin() requires requires { requires std::input_iterator<const_iterator>; }
   {
     return const_iterator(this);
   }
   const_iterator cend() requires requires { requires std::input_iterator<const_iterator>; }
   {
-    return const_iterator();
+    return const_iterator(this, nullptr);
   }
 
   size_t get_consume_idx() const { return this->consumer_next_idx_; }
 
-  const T* peek() { return this->q_->peek_blocking(this->queue_idx_, *this); }
-
-  template <class F>
-  ConsumeReturnCode consume(F&& f) requires(std::is_void_v<decltype((std::forward<F>(f)(std::declval<T>()), void()))>)
-  {
-    return this->q_->consume_blocking(this->queue_idx_, *this, std::forward<F>(f));
-  }
-
-  ConsumeReturnCode skip() { return this->q_->skip_blocking(this->queue_idx_, *this); }
-
-  ConsumeReturnCode consume(T& dst) requires std::is_default_constructible_v<T>
-  {
-    return this->q_->consume_raw_blocking(this->queue_idx_, reinterpret_cast<void*>(&dst), *this);
-  }
-
-  T consume() requires std::is_trivially_copyable_v<T>
-  {
-    alignas(T) std::byte raw[sizeof(T)];
-    auto ret_code = this->q_->consume_raw_blocking(this->queue_idx_, raw, *this);
-    switch (ret_code)
-    {
-    case ConsumeReturnCode::Consumed:
-      return *std::launder(reinterpret_cast<T*>(raw));
-    case ConsumeReturnCode::Stopped:
-      throw QueueStoppedExp();
-    case ConsumeReturnCode::SlowConsumer:
-      throw SlowConsumerExp();
-    case ConsumeReturnCode::NothingToConsume:
-    {
-    }
-    }
-
-    assert(false);
-    throw std::runtime_error("blocking consume cannot return NothingToConsume");
-  }
-
-  ConsumeReturnCode consume_raw(void* dst) requires std::is_trivially_copyable_v<T>
-  {
-    return this->q_->consume_raw_blocking(this->queue_idx_, dst, *this);
-  }
+  auto peek() { return this->q_->do_peek(this->queue_idx_, *this); }
+  void skip() { return this->q_->do_skip(this->queue_idx_, *this); }
 };
 
 template <class Queue>
 struct ConsumerNonBlocking : ConsumerBase<Queue>
 {
   using ConsumerBase<Queue>::ConsumerBase;
-  using T = typename Queue::type;
+  using value_ptr = std::add_pointer_t<typename ConsumerBase<Queue>::CT>;
 
   static constexpr bool blocking_v = false;
   using const_iterator =
@@ -362,35 +291,18 @@ struct ConsumerNonBlocking : ConsumerBase<Queue>
 
   const_iterator cend() requires requires { requires std::input_iterator<const_iterator>; }
   {
-    return const_iterator();
+    return const_iterator(this, nullptr);
   }
 
-  const T* peek() { return this->q_->peek_non_blocking(this->queue_idx_, *this); }
-
-  template <class F>
-  ConsumeReturnCode consume(F&& f) requires(std::is_void_v<decltype((std::forward<F>(f)(std::declval<T>()), void()))>)
-  {
-    return this->q_->consume_non_blocking(this->queue_idx_, *this, std::forward<F>(f));
-  }
-
-  ConsumeReturnCode skip() { return this->q_->skip_non_blocking(this->queue_idx_, *this); }
-
-  ConsumeReturnCode consume(T& dst) requires std::is_default_constructible_v<T>
-  {
-    return this->q_->consume_raw_non_blocking(this->queue_idx_, reinterpret_cast<void*>(&dst), *this);
-  }
-
-  ConsumeReturnCode consume_raw(void* dst) requires std::is_trivially_copyable_v<T>
-  {
-    return this->q_->consume_raw_non_blocking(this->queue_idx_, dst, *this);
-  }
+  auto peek() { return this->q_->do_peek(this->queue_idx_, *this); }
+  void skip() { return this->q_->do_skip(this->queue_idx_, *this); }
 };
 
 // TODO: how to ensure consumer group cannot out-live the queues themselves?
 template <class Queue, size_t MAX_SIZE = 8>
 struct alignas(_CACHE_PREFETCH_SIZE_) AnycastConsumerGroup
 {
-  using T = typename Queue::type;
+  using T = typename Queue::type*;
   using ConsumerType = ConsumerNonBlocking<Queue>;
 
   std::array<ConsumerType, MAX_SIZE> consumers;
@@ -483,7 +395,7 @@ struct alignas(_CACHE_PREFETCH_SIZE_) AnycastConsumerGroup
   }
 };
 
-template <class Queue>
+/*template <class Queue>
 class alignas(_CACHE_PREFETCH_SIZE_) AnycastConsumerBlocking
 {
   using ConsumerGroupType = AnycastConsumerGroup<Queue>;
@@ -491,7 +403,7 @@ class alignas(_CACHE_PREFETCH_SIZE_) AnycastConsumerBlocking
   AnycastConsumerGroup<Queue>& consumer_group_;
 
 public:
-  using T = typename Queue::type;
+  using T = typename Queue::type*;
 
   AnycastConsumerBlocking(AnycastConsumerGroup<Queue>& consumer_group)
     : consumer_group_(consumer_group)
@@ -696,4 +608,4 @@ private:
 
     return ConsumeReturnCode::NothingToConsume;
   }
-};
+};*/

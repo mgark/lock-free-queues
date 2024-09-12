@@ -43,18 +43,14 @@ int main()
   ConsumerBlocking<Queue> c2[2] = {q1, q2};
   ProducerBlocking<Queue> p1(q1);
   ProducerBlocking<Queue> p2(q2);
-  q1.start();
-  q2.start();
-  {
-    p1.emplace(1u, 1u, 100.0, 'A');
-    p2.emplace(2u, 2u, 100.0, 'A');
-  }
-  {
-    c1[0].consume([](const Order& o) { std::cout << o; });
-    c2[0].consume([](const Order& o) { std::cout << o; });
-    c2[1].consume([](const Order& o) { std::cout << o; });
-    c1[1].consume([](const Order& o) { std::cout << o; });
-  }
+
+  p1.emplace(1u, 1u, 100.0, 'A');
+  p2.emplace(2u, 2u, 100.0, 'A');
+
+  std::cout << *c1[0].cbegin();
+  std::cout << *c2[0].cbegin();
+  std::cout << *c1[1].cbegin();
+  std::cout << *c2[1].cbegin();
 
   return 0;
 }

@@ -25,6 +25,8 @@
 #include <math.h>
 #include <memory>
 
+#ifndef _DISABLE_ADAPTIVE_QUEUE_TEST_
+
 template <class T, size_t _MAX_CONSUMER_N_ = 8, size_t _BATCH_NUM_ = 4, class Allocator = std::allocator<T>, class VersionType = size_t>
 class SPMCMulticastQueueReliableAdaptiveBounded
   : public SPMCMulticastQueueAdaptiveBase<T, SPMCMulticastQueueReliableAdaptiveBounded<T, _MAX_CONSUMER_N_, _BATCH_NUM_, Allocator>,
@@ -202,7 +204,7 @@ public:
           if (stopped)
           {
             detach_consumer(i);
-            return {0, 0, CONSUMER_IS_WELCOME, 0 /*nodes per batch does not matter*/, 0, 0, 0, ConsumerAttachReturnCode::Stopped};
+            return {0, 0, CONSUMER_IS_WELCOME, 0 /*nodes per batch does not matter*/, 0, 0, 0, ConsumerAttachReturnCode::NoProducers};
           }
 
           size_t queue_sz = this->initial_sz_ * POWER_OF_TWO[consumer_queue_idx];
@@ -282,15 +284,6 @@ public:
       {
         if (locker.compare_exchange_strong(is_locked, true, std::memory_order_release, std::memory_order_relaxed))
         {
-          // let's wait for producer to consumer our positions from which we
-          // shall start safely consuming
-          size_t stopped = is_stopped();
-          if (stopped)
-          {
-            detach_producer(i);
-            return {0, 0, ProducerAttachReturnCode::Stopped};
-          }
-
           return {i, this->items_per_batch_, ProducerAttachReturnCode::Attached};
         } // else someone stole the locker just before us!
       }
@@ -367,10 +360,6 @@ public:
   template <class Producer, class... Args, bool blocking = Producer::blocking_v>
   ProduceReturnCode emplace(size_t original_idx, Producer& producer, Args&&... args)
   {
-    if (!is_running())
-    {
-      return ProduceReturnCode::NotRunning;
-    }
 
     int i = 0;
     size_t idx = original_idx & this->idx_mask_;
@@ -399,11 +388,6 @@ public:
       first_time_publish = min_next_consumer_idx == CONSUMER_IS_WELCOME;
       no_free_slot = !first_time_publish &&
         (original_idx - min_next_consumer_idx_local >= this->current_sz_) && !free_node;
-
-      if (!is_running())
-      {
-        return ProduceReturnCode::NotRunning;
-      }
 
       if (no_free_slot)
       {
@@ -522,3 +506,4 @@ public:
     }
   }
 };
+#endif

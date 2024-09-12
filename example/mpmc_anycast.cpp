@@ -35,7 +35,7 @@ struct Order
 
 int main()
 {
-#ifndef _DISABLE_UNRELIABLE_MULTICAST_TEST_
+#ifndef _DISABLE_SYNTHETIC_ANYCAST_TEST_
   using Queue = SPMCMulticastQueueReliableBounded<Order, 2>;
   Queue q1(8);
   Queue q2(8);

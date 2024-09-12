@@ -17,7 +17,6 @@
 #pragma once
 
 #include "common.h"
-#include "single_bit_reuse.h"
 #include "spin_lock.h"
 #include <atomic>
 #include <cstdint>
@@ -90,10 +89,9 @@ protected:
   size_t max_outstanding_non_consumed_items_;
   NodeAllocator alloc_;
   Node* nodes_;
-  Spinlock slow_path_guard_;
+  mutable Spinlock slow_path_guard_;
 
   // these variables update quite frequently
-  std::atomic<QueueState> state_{QueueState::Created};
 
 public:
   static constexpr size_t _item_per_prefetch_num_ = 2 * (_CACHE_PREFETCH_SIZE_ / sizeof(Node));
@@ -135,8 +133,6 @@ public:
 
   ~SPMCMulticastQueueBase()
   {
-    stop();
-
     if constexpr (!std::is_trivially_destructible_v<T>)
     {
       size_t producer_last_idx = static_cast<const Derived*>(this)->get_producer_idx();
@@ -155,461 +151,67 @@ public:
     NodeAllocTraits::deallocate(alloc_, nodes_, n_);
   }
 
-  void stop() { this->state_.store(QueueState::Stopped, std::memory_order_release); }
-
-  bool is_stopped() const
-  {
-    return this->state_.load(std::memory_order_acquire) == QueueState::Stopped;
-  }
-  bool is_running() const
-  {
-    return this->state_.load(std::memory_order_relaxed) == QueueState::Running;
-  }
-
-  void start()
-  {
-    // we need an exclusive lock here as the consumers which join would
-    // need to set their own consumer reader idx to 0 if the queue has not started yet - they can
-    // only do that before start method is called
-    Spinlock::scoped_lock autolock(slow_path_guard_);
-    this->state_.store(QueueState::Running, std::memory_order_release);
-  }
-
   template <class C>
-  requires std::is_trivially_copyable_v<T> ConsumeReturnCode consume_raw_blocking(size_t& queue_idx,
-                                                                                  void* dest, C& consumer)
+  const T* do_peek(size_t queue_idx, C& consumer)
   {
-    QueueState state;
-    ConsumeReturnCode r;
     size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
-    size_t idx = original_idx & consumer.idx_mask_;
-    size_t node_idx;
+    size_t warped_idx = original_idx & consumer.idx_mask_;
+    size_t node_idx = warped_idx;
     if constexpr (_remap_index_)
     {
       node_idx = map_index<_item_per_prefetch_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
     }
-    else
-    {
-      node_idx = idx;
-    }
 
     Node& node = this->nodes_[node_idx];
-    size_t expected_version;
-    if constexpr (_synchronized_consumer_)
+    if constexpr (C::blocking_v)
     {
-      idx = original_idx;
-      expected_version = 1 + div_by_power_of_two(idx, power_of_two_idx_);
+      return do_peek_blocking(original_idx, node, warped_idx, consumer);
     }
-
-    do
+    else
     {
-      if constexpr (_versionless_)
-      {
-        r = static_cast<Derived&>(*this).consume_by_func(
-          original_idx, queue_idx, node, consumer,
-          [dest](void* storage)
-          { std::memcpy(dest, std::launder(reinterpret_cast<T*>(storage)), sizeof(T)); });
-      }
-      else
-      {
-        VersionType version = node.version_.load(std::memory_order_acquire);
-        if constexpr (_synchronized_consumer_)
-        {
-          version = node.version_.load(std::memory_order_acquire);
-          r = static_cast<Derived&>(*this).consume_by_func(
-            idx, queue_idx, node, version, expected_version, consumer,
-            [dest](void* storage)
-            { std::memcpy(dest, std::launder(reinterpret_cast<T*>(storage)), sizeof(T)); });
-        }
-        else
-        {
-          r = static_cast<Derived&>(*this).consume_by_func(
-            idx, queue_idx, node, version, consumer,
-            [dest](void* storage)
-            { std::memcpy(dest, std::launder(reinterpret_cast<T*>(storage)), sizeof(T)); });
-        }
-      }
-      if (r == ConsumeReturnCode::Consumed)
-        return r;
-      else
-      {
-        unroll<_CPU_PAUSE_N_>([]() { _mm_pause(); });
-      }
-
-      state = this->state_.load(std::memory_order_acquire);
-    } while (state == QueueState::Running && r == ConsumeReturnCode::NothingToConsume);
-
-    if (state == QueueState::Stopped)
-      return ConsumeReturnCode::Stopped;
-
-    return r;
+      return do_peek_non_blocking(original_idx, node, warped_idx, consumer);
+    }
   }
 
   template <class C>
-  ConsumeReturnCode consume_raw_non_blocking(size_t& queue_idx, void* dest, C& consumer)
+  const T* do_peek_non_blocking(size_t original_idx, Node& node, size_t warped_idx, C& consumer)
   {
-    size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
-    size_t idx = original_idx & consumer.idx_mask_;
-
-    size_t node_idx;
-    if constexpr (_remap_index_)
-    {
-      node_idx = map_index<_item_per_prefetch_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
-    }
-    else
-    {
-      node_idx = idx;
-    }
-
-    size_t expected_version;
-    if constexpr (_synchronized_consumer_)
-    {
-      idx = original_idx;
-      expected_version = 1 + div_by_power_of_two(idx, power_of_two_idx_);
-    }
-
-    Node& node = this->nodes_[node_idx];
-
-    ConsumeReturnCode r;
     if constexpr (_versionless_)
     {
-      r = static_cast<Derived&>(*this).consume_by_func(
-        original_idx, queue_idx, node, consumer,
-        [dest](void* storage)
-        { std::memcpy(dest, std::launder(reinterpret_cast<T*>(storage)), sizeof(T)); });
+      return static_cast<Derived*>(this)->peek(node, original_idx, warped_idx, consumer);
     }
     else
     {
-      VersionType version = node.version_.load(std::memory_order_acquire);
-      if constexpr (_synchronized_consumer_)
+      if constexpr (_binary_version_)
       {
-        r = static_cast<Derived&>(*this).consume_by_func(
-          idx, queue_idx, node, version, expected_version, consumer,
-          [dest](void* storage)
-          { std::memcpy(dest, std::launder(reinterpret_cast<T*>(storage)), sizeof(T)); });
+        return static_cast<Derived*>(this)->peek(node, warped_idx, consumer);
       }
       else
       {
-        r = static_cast<Derived&>(*this).consume_by_func(
-          idx, queue_idx, node, version, consumer,
-          [dest](void* storage)
-          { std::memcpy(dest, std::launder(reinterpret_cast<T*>(storage)), sizeof(T)); });
+        static_assert(_synchronized_consumer_);
+        size_t expected_version = 1 + div_by_power_of_two(original_idx, power_of_two_idx_);
+        return static_cast<Derived*>(this)->peek(node, expected_version, consumer);
       }
-    }
-
-    if (r == ConsumeReturnCode::Consumed)
-    {
-      return r;
-    }
-    else
-    {
-      QueueState state = this->state_.load(std::memory_order_acquire);
-      if (state == QueueState::Stopped)
-        return ConsumeReturnCode::Stopped;
-
-      return r;
-    }
-  }
-
-  template <class C, class F>
-  ConsumeReturnCode consume_blocking(size_t& queue_idx, C& consumer, F&& f)
-  {
-    ConsumeReturnCode r;
-    QueueState state;
-
-    size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
-    size_t idx = original_idx & consumer.idx_mask_;
-
-    size_t node_idx;
-    if constexpr (_remap_index_)
-    {
-      node_idx = map_index<_item_per_prefetch_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
-    }
-    else
-    {
-      node_idx = idx;
-    }
-
-    Node& node = this->nodes_[node_idx];
-
-    size_t expected_version;
-    if constexpr (_synchronized_consumer_)
-    {
-      idx = original_idx;
-      expected_version = 1 + div_by_power_of_two(idx, power_of_two_idx_);
-    }
-
-    do
-    {
-      if constexpr (_versionless_)
-      {
-        r = static_cast<Derived&>(*this).consume_by_func(
-          original_idx, queue_idx, node, consumer,
-          [f = std::forward<F>(f)](void* storage) mutable
-          { std::forward<F>(f)(*std::launder(reinterpret_cast<const T*>(storage))); });
-      }
-      else
-      {
-        VersionType version = node.version_.load(std::memory_order_acquire);
-        if constexpr (_synchronized_consumer_)
-        {
-          r = static_cast<Derived&>(*this).consume_by_func(
-            idx, queue_idx, node, version, expected_version, consumer,
-            [f = std::forward<F>(f)](void* storage) mutable
-            { std::forward<F>(f)(*std::launder(reinterpret_cast<const T*>(storage))); });
-        }
-        else
-        {
-          r = static_cast<Derived&>(*this).consume_by_func(
-            idx, queue_idx, node, version, consumer,
-            [f = std::forward<F>(f)](void* storage) mutable
-            { std::forward<F>(f)(*std::launder(reinterpret_cast<const T*>(storage))); });
-        }
-      }
-
-      if (r == ConsumeReturnCode::Consumed)
-        return r;
-      else
-      {
-        unroll<_CPU_PAUSE_N_>([]() { _mm_pause(); });
-      }
-
-      state = this->state_.load(std::memory_order_acquire);
-    } while (state == QueueState::Running && r == ConsumeReturnCode::NothingToConsume);
-
-    if (state == QueueState::Stopped)
-      return ConsumeReturnCode::Stopped;
-
-    return r;
-  }
-
-  template <class C, class F>
-  ConsumeReturnCode consume_non_blocking(size_t& queue_idx, C& consumer, F&& f)
-  {
-    ConsumeReturnCode r;
-    size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
-    size_t idx = original_idx & consumer.idx_mask_;
-
-    size_t node_idx;
-    if constexpr (_remap_index_)
-    {
-      node_idx = map_index<_item_per_prefetch_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
-    }
-    else
-    {
-      node_idx = idx;
-    }
-
-    size_t expected_version;
-    if constexpr (_synchronized_consumer_)
-    {
-      idx = original_idx;
-      expected_version = 1 + div_by_power_of_two(idx, power_of_two_idx_);
-    }
-
-    Node& node = this->nodes_[node_idx];
-    if constexpr (_versionless_)
-    {
-      r = static_cast<Derived&>(*this).consume_by_func(
-        original_idx, queue_idx, node, consumer,
-        [f = std::forward<F>(f)](void* storage) mutable
-        { std::forward<F>(f)(*std::launder(reinterpret_cast<const T*>(storage))); });
-    }
-    else
-    {
-      VersionType version = node.version_.load(std::memory_order_acquire);
-      if constexpr (_synchronized_consumer_)
-      {
-        r = static_cast<Derived&>(*this).consume_by_func(
-          idx, queue_idx, node, version, expected_version, consumer,
-          [f = std::forward<F>(f)](void* storage) mutable
-          { std::forward<F>(f)(*std::launder(reinterpret_cast<const T*>(storage))); });
-      }
-      else
-      {
-        r = static_cast<Derived&>(*this).consume_by_func(
-          idx, queue_idx, node, version, consumer,
-          [f = std::forward<F>(f)](void* storage) mutable
-          { std::forward<F>(f)(*std::launder(reinterpret_cast<const T*>(storage))); });
-      }
-    }
-
-    if (r == ConsumeReturnCode::Consumed)
-    {
-      return r;
-    }
-    else
-    {
-      QueueState state = this->state_.load(std::memory_order_acquire);
-      if (state == QueueState::Stopped)
-        return ConsumeReturnCode::Stopped;
-
-      return r;
     }
   }
 
   template <class C>
-  const T* peek_blocking(size_t queue_idx, C& consumer)
+  const T* do_peek_blocking(size_t original_idx, Node& node, size_t warped_idx, C& consumer)
   {
-    size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
-    size_t idx = original_idx & consumer.idx_mask_;
-    size_t node_idx;
-    if constexpr (_remap_index_)
-    {
-      node_idx = map_index<_item_per_prefetch_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
-    }
-    else
-    {
-      node_idx = idx;
-    }
-
-    size_t expected_version;
-    if constexpr (_synchronized_consumer_)
-    {
-      idx = original_idx;
-      expected_version = 1 + div_by_power_of_two(idx, power_of_two_idx_);
-    }
-
-    // if (!this->is_running())
-    //   return nullptr;
-
-    Node& node = this->nodes_[node_idx];
-    const T* r;
     for (;;)
     {
-      if constexpr (_versionless_)
+      auto value = do_peek_non_blocking(original_idx, node, warped_idx, consumer);
+      if (value)
       {
-        r = peek(queue_idx, node, original_idx, consumer);
+        return value;
       }
-      else
-      {
-        VersionType version = node.version_.load(std::memory_order_acquire);
-        if constexpr (_synchronized_consumer_)
-        {
-          r = peek(queue_idx, node, version, expected_version, consumer);
-        }
-        else
-        {
-          r = peek(queue_idx, idx, node, version, consumer);
-        }
-      }
-      if (r)
-      {
-        return r;
-      }
-      else
-      {
-        unroll<_CPU_PAUSE_N_>([]() { _mm_pause(); });
-      }
+
+      unroll<_CPU_PAUSE_N_>([]() { _mm_pause(); });
     }
-    return nullptr;
   }
 
   template <class C>
-  const T* peek_non_blocking(size_t& queue_idx, C& consumer) requires(!_synchronized_consumer_)
-  {
-    size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
-    size_t idx = consumer.consumer_next_idx_ & consumer.idx_mask_;
-
-    size_t node_idx;
-    if constexpr (_remap_index_)
-    {
-      node_idx = map_index<_item_per_prefetch_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
-    }
-    else
-    {
-      node_idx = idx;
-    }
-
-    size_t expected_version;
-    if constexpr (_synchronized_consumer_)
-    {
-      idx = original_idx;
-      expected_version = 1 + div_by_power_of_two(idx, power_of_two_idx_);
-    }
-
-    const T* r;
-    Node& node = this->nodes_[node_idx];
-    if constexpr (_versionless_)
-    {
-      r = peek(queue_idx, node, consumer.consumer_next_idx_, consumer);
-    }
-    else
-    {
-      VersionType version = node.version_.load(std::memory_order_acquire);
-      if constexpr (_synchronized_consumer_)
-      {
-        r = peek(queue_idx, node, version, expected_version, consumer);
-      }
-      else
-      {
-        r = peek(queue_idx, idx, node, version, consumer);
-      }
-    }
-
-    return r;
-  }
-
-  template <class C>
-  ConsumeReturnCode skip_blocking(size_t& queue_idx, C& consumer)
-  {
-    ConsumeReturnCode r;
-    size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
-    size_t idx = original_idx & consumer.idx_mask_;
-    size_t node_idx;
-    if constexpr (_remap_index_)
-    {
-      node_idx = map_index<_item_per_prefetch_num_, _cache_line_num_>(original_idx) & consumer.idx_mask_;
-    }
-    else
-    {
-      node_idx = idx;
-    }
-
-    size_t expected_version;
-    if constexpr (_synchronized_consumer_)
-    {
-      idx = original_idx;
-      expected_version = 1 + div_by_power_of_two(idx, power_of_two_idx_);
-    }
-
-    QueueState state;
-    Node& node = this->nodes_[node_idx];
-    do
-    {
-      if constexpr (_versionless_)
-      {
-        r = static_cast<Derived&>(*this).skip(idx, queue_idx, node, consumer);
-      }
-      else
-      {
-        VersionType version = node.version_.load(std::memory_order_acquire);
-        if constexpr (_synchronized_consumer_)
-        {
-          r = static_cast<Derived&>(*this).skip(idx, queue_idx, node, version, expected_version, consumer);
-        }
-        else
-        {
-          r = static_cast<Derived&>(*this).skip(idx, queue_idx, node, version, consumer);
-        }
-      }
-      if (ConsumeReturnCode::Consumed == r)
-        return r;
-      else
-      {
-        unroll<_CPU_PAUSE_N_>([]() { _mm_pause(); });
-      }
-
-      state = this->state_.load(std::memory_order_acquire);
-    } while (state == QueueState::Running && r == ConsumeReturnCode::NothingToConsume);
-    if (state == QueueState::Stopped)
-      return ConsumeReturnCode::Stopped;
-
-    return r;
-  }
-
-  template <class C>
-  ConsumeReturnCode skip_non_blocking(size_t& queue_idx, C& consumer)
+  void do_skip(size_t& queue_idx, C& consumer)
   {
     size_t original_idx = static_cast<Derived*>(this)->acquire_consumer_idx(consumer);
     size_t idx = original_idx & consumer.idx_mask_;
@@ -623,11 +225,10 @@ public:
       node_idx = idx;
     }
 
-    ConsumeReturnCode r;
     Node& node = this->nodes_[node_idx];
     if constexpr (_versionless_)
     {
-      r = static_cast<Derived&>(*this).skip(idx, queue_idx, node, consumer);
+      static_cast<Derived&>(*this).skip(idx, queue_idx, node, consumer);
     }
     else
     {
@@ -636,24 +237,12 @@ public:
       {
         idx = original_idx;
         size_t expected_version = 1 + div_by_power_of_two(idx, power_of_two_idx_);
-        r = static_cast<Derived&>(*this).skip(idx, queue_idx, node, version, expected_version, consumer);
+        static_cast<Derived&>(*this).skip(idx, queue_idx, node, version, expected_version, consumer);
       }
       else
       {
-        r = static_cast<Derived&>(*this).skip(idx, queue_idx, node, version, consumer);
+        static_cast<Derived&>(*this).skip(idx, queue_idx, node, version, consumer);
       }
-    }
-    if (r == ConsumeReturnCode::Consumed)
-    {
-      return r;
-    }
-    else
-    {
-      QueueState state = this->state_.load(std::memory_order_acquire);
-      if (state == QueueState::Stopped)
-        return ConsumeReturnCode::Stopped;
-
-      return r;
     }
   }
 
@@ -663,33 +252,12 @@ public:
   template <class C>
   bool empty(size_t& queue_idx, C& consumer) requires(!_synchronized_consumer_)
   {
-    return consumer.consumer_next_idx_ >= static_cast<const Derived*>(this)->get_producer_idx() ||
-      !is_running();
+    return consumer.consumer_next_idx_ >= static_cast<const Derived*>(this)->get_producer_idx();
   }
 
   template <class C>
   bool empty(size_t& queue_idx, C& consumer) requires(_synchronized_consumer_)
   {
-    return this->get_consumer_next_idx() >= static_cast<const Derived*>(this)->get_producer_idx() ||
-      !is_running();
-  }
-
-  template <class C>
-  const T* peek(size_t& queue_idx, size_t idx, Node& node, auto version, C& consumer) requires(!_synchronized_consumer_)
-  {
-    return static_cast<Derived*>(this)->peek(idx, node, version, consumer);
-  }
-
-  template <class C>
-  const T* peek(size_t& queue_idx, Node& node, auto version, auto expected_version,
-                C& consumer) requires(_synchronized_consumer_)
-  {
-    return static_cast<Derived*>(this)->peek(node, version, expected_version, consumer);
-  }
-
-  template <class C>
-  const T* peek(size_t& queue_idx, Node& node, size_t original_idx, C& consumer) requires(!_synchronized_consumer_)
-  {
-    return static_cast<Derived*>(this)->peek(node, original_idx, consumer);
+    return this->get_consumer_next_idx() >= static_cast<const Derived*>(this)->get_producer_idx();
   }
 };

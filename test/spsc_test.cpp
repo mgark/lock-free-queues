@@ -16,7 +16,6 @@
 
 #include "common_test_utils.h"
 #include "detail/common.h"
-#include "detail/single_bit_reuse.h"
 #include <assert.h>
 #include <catch2/catch_all.hpp>
 #include <cstdint>
@@ -31,15 +30,15 @@ TEST_CASE("SPSC basic functional test - version based queue")
   constexpr bool blocking = true;
   ConsumerBlocking<Queue> c(q);
   ProducerBlocking<Queue> p(q);
-  q.start();
 
   {
     auto r = p.emplace(1u, 1u, 100.0, 'A');
     CHECK(ProduceReturnCode::Published == r);
   }
 
+  auto it = c.cbegin();
   {
-    auto r = c.consume();
+    auto r = *it;
     CHECK(r.id == 1u);
   }
 
@@ -48,7 +47,7 @@ TEST_CASE("SPSC basic functional test - version based queue")
     CHECK(ProduceReturnCode::Published == r);
   }
   {
-    auto r = c.consume();
+    auto r = *(++it);
     CHECK(r.id == 3u);
   }
 }
@@ -62,7 +61,6 @@ TEST_CASE("SPSC basic functional test - wrap around the queue")
 
   ConsumerNonBlocking<Queue> c(q);
   ProducerNonBlocking<Queue> p(q);
-  q.start();
 
   for (size_t i = 1; i <= N; ++i)
   {
@@ -74,11 +72,11 @@ TEST_CASE("SPSC basic functional test - wrap around the queue")
     auto r = p.emplace(3u);
     CHECK(ProduceReturnCode::SlowConsumer == r);
   }
-  for (size_t i = 1; i <= N; ++i)
+
+  auto it = c.cbegin();
+  for (size_t i = 1; i <= N; ++i, ++it)
   {
-    auto r = c.consume([&q, val = i](const MsgType& o) mutable
-                       { CHECK(o == MsgType{static_cast<MsgType>(val)}); });
-    CHECK(ConsumeReturnCode::Consumed == r);
+    CHECK(*it == MsgType{static_cast<MsgType>(i)});
   }
 }
 
@@ -91,39 +89,26 @@ TEST_CASE("SPSC stop / start test")
   constexpr bool blocking = true;
   ConsumerBlocking<Queue> c(q);
   ProducerBlocking<Queue> p(q);
-  q.start();
 
   {
     auto r = p.emplace(1u, 1u, 100.0, 'A');
     CHECK(ProduceReturnCode::Published == r);
   }
 
-  {
-    auto r = c.consume([&q](const Order& o) mutable { std::cout << o; });
-    CHECK(ConsumeReturnCode::Consumed == r);
-  }
+  auto it = c.cbegin();
+  CHECK(it->id == 1u);
 
-  std::jthread t(
-    [&]()
-    {
-      sleep(1); /*wait until consumer calls consume function below*/
-      q.stop();
-    });
-  {
-    auto cr = c.consume([&q](const Order& o) mutable { std::cout << o; });
-    CHECK(ConsumeReturnCode::Stopped == cr);
+  p.halt();
+  CHECK(p.is_halted() == true);
 
-    auto pr = p.emplace(1u, 1u, 100.0, 'A');
-    CHECK(ProduceReturnCode::NotRunning == pr);
-  }
-
-  q.start();
+  p.detach();
+  p.attach(q);
   {
-    auto pr = p.emplace(1u, 1u, 100.0, 'A');
+    auto pr = p.emplace(2u, 1u, 100.0, 'A');
     CHECK(ProduceReturnCode::Published == pr);
 
-    auto cr = c.consume([&q](const Order& o) mutable { std::cout << o; });
-    CHECK(ConsumeReturnCode::Consumed == cr);
+    ++it;
+    CHECK(it->id == 2u);
   }
 }
 

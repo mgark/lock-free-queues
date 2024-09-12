@@ -17,7 +17,6 @@
 #pragma once
 
 #include "common.h"
-#include "detail/single_bit_reuse.h"
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -29,13 +28,13 @@ template <class Queue, class Derived>
 class alignas(_CACHE_PREFETCH_SIZE_) ProducerBase
 {
 protected:
+  // WARNING! no atomic variables must be declared as a class member as compiler does optimize badly in that case
   Queue* q_{nullptr};
   friend Queue;
 
   size_t last_producer_idx_{PRODUCER_IS_WELCOME};
   size_t min_next_consumer_idx_{CONSUMER_IS_WELCOME};
   size_t producer_id_{std::numeric_limits<size_t>::max()};
-  size_t items_per_batch_;
 
 #ifdef _TRACE_PRODUCER_IDX_
   size_t min_next_producer_idx_{PRODUCER_IS_WELCOME};
@@ -90,7 +89,6 @@ public:
     if (ticket.ret_code == ProducerAttachReturnCode::Attached)
     {
       last_producer_idx_ = PRODUCER_JOIN_INPROGRESS;
-      items_per_batch_ = ticket.items_per_batch;
       producer_id_ = ticket.producer_id;
       q_ = &q;
     }
@@ -98,11 +96,13 @@ public:
     return ticket.ret_code;
   }
 
+  void halt() noexcept { q_->halt_producer(*this); }
+  bool is_halted() const noexcept { return q_->is_halted(*this); }
+
   bool detach()
   {
     if (q_)
     {
-      // TODO: need properly implement it as if you were to call it would be crash the program
       if (q_->detach_producer(producer_id_))
       {
         q_ = nullptr;
@@ -114,7 +114,7 @@ public:
   }
 
   /* this functions inserts publisher idx, and it is really meant to be used for debugging*/
-  ProduceReturnCode emplace_producer_own_idx() requires std::same_as<size_t, type> || std::same_as<integral_msb_always_0<size_t>, type>
+  ProduceReturnCode emplace_producer_own_idx() requires std::same_as<size_t, type>
   {
     if (PRODUCER_JOIN_INPROGRESS == this->last_producer_idx_)
     {

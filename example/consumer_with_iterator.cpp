@@ -41,20 +41,27 @@ int main()
   constexpr bool blocking = true;
   ConsumerBlocking<Queue> c(q);
   ProducerBlocking<Queue> p(q);
-  q.start();
 
   p.emplace(1u, 1u, 100.0, 'A');
   p.emplace(2u, 1u, 100.0, 'A');
   p.emplace(3u, 1u, 100.0, 'A');
 
   const_consumer_iterator<ConsumerBlocking<Queue>> it = c.cbegin();
-  int i = 1;
-  while (it != c.cend())
+  try
   {
-    std::cout << *it;
-    if (i++ == 3)
-      q.stop(); // this would mark the end for the next increment
-    ++it;
+
+    int i = 1;
+    while (it != c.cend())
+    {
+      std::cout << *it;
+      if (i++ == 3)
+        c.halt();
+      ++it;
+    }
+  }
+  catch (const ConsumerHaltedExp& e)
+  {
+    std::cout << "\n got halt exception";
   }
 
   return 0;

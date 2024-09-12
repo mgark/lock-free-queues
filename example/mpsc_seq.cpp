@@ -36,21 +36,15 @@ struct Order
 int main()
 {
   using Queue = SPMCMulticastQueueReliableBounded<Order, 2, 2>;
-  Queue q1(8);
+  Queue q1(16);
 
   constexpr bool blocking = true;
   ConsumerBlocking<Queue> c1{q1};
   ProducerBlocking<Queue> p1(q1);
   ProducerBlocking<Queue> p2(q1);
-  q1.start();
-  {
-    p1.emplace(1u, 1u, 100.0, 'A');
-    p2.emplace(2u, 2u, 100.0, 'A');
-  }
-  {
-    c1.consume([](const Order& o) { std::cout << o; });
-    c1.consume([](const Order& o) { std::cout << o; });
-  }
+  p1.emplace(1u, 1u, 100.0, 'A');
+  p2.emplace(2u, 2u, 100.0, 'A');
+  std::cout << *c1.cbegin();
 
   return 0;
 }

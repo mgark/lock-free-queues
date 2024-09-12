@@ -17,7 +17,6 @@
 #include "common_test_utils.h"
 #include "detail/common.h"
 #include "detail/consumer.h"
-#include "detail/single_bit_reuse.h"
 #include <assert.h>
 #include <catch2/catch_all.hpp>
 #include <mpmc.h>
@@ -30,45 +29,19 @@ TEST_CASE("SPMC functional test")
   constexpr bool blocking = true;
   ConsumerBlocking<Queue> c1;
   ConsumerBlocking<Queue> c2;
-  ProducerBlocking<Queue> p(q);
   CHECK(ConsumerAttachReturnCode::Attached == c1.attach(q));
   CHECK(ConsumerAttachReturnCode::Attached == c2.attach(q));
-  q.start();
+  ProducerBlocking<Queue> p(q);
   {
     auto r = p.emplace(1u, 1u, 100.0, 'A');
     CHECK(ProduceReturnCode::Published == r);
   }
-  {
-    auto r = c1.consume([&q](const Order& o) mutable { std::cout << o; });
-    CHECK(ConsumeReturnCode::Consumed == r);
-    r = c2.consume([&q](const Order& o) mutable { std::cout << o; });
-    CHECK(ConsumeReturnCode::Consumed == r);
-  }
-}
 
-TEST_CASE("SPMC functional test - re-use bit")
-{
-  using MsgType = integral_msb_always_0<uint32_t>;
-  using Queue = SPMCMulticastQueueReliableBounded<MsgType, 2>;
-
-  Queue q(4096);
-
-  constexpr bool blocking = true;
-  ConsumerBlocking<Queue> c1;
-  ConsumerBlocking<Queue> c2;
-  ProducerBlocking<Queue> p(q);
-  CHECK(ConsumerAttachReturnCode::Attached == c1.attach(q));
-  CHECK(ConsumerAttachReturnCode::Attached == c2.attach(q));
-  q.start();
+  auto it1 = c1.cbegin();
+  auto it2 = c2.cbegin();
   {
-    auto r = p.emplace(1u);
-    CHECK(ProduceReturnCode::Published == r);
-  }
-  {
-    auto r = c1.consume([&q](const MsgType& o) mutable { CHECK(o == 1u); });
-    CHECK(ConsumeReturnCode::Consumed == r);
-    r = c2.consume([&q](const MsgType& o) mutable { CHECK(o == 1u); });
-    CHECK(ConsumeReturnCode::Consumed == r);
+    CHECK(1u == it1->id);
+    CHECK(1u == it2->id);
   }
 }
 
@@ -82,15 +55,12 @@ TEST_CASE("SPMC functional test - Blocking Peek and Skip")
   constexpr bool blocking = true;
   ConsumerBlocking<Queue> c1;
   ConsumerBlocking<Queue> c2;
-  ProducerBlocking<Queue> p(q);
   CHECK(ConsumerAttachReturnCode::Attached == c1.attach(q));
   CHECK(ConsumerAttachReturnCode::Attached == c2.attach(q));
-  q.start();
+  ProducerBlocking<Queue> p(q);
 
-  {
-    auto r = p.emplace(1u);
-    CHECK(ProduceReturnCode::Published == r);
-  }
+  auto r = p.emplace(1u);
+  CHECK(ProduceReturnCode::Published == r);
 
   {
     const MsgType* val;
@@ -128,10 +98,9 @@ TEST_CASE("SPMC functional test - Non-Blocking Peek and Skip")
   constexpr bool blocking = true;
   ConsumerNonBlocking<Queue> c1;
   ConsumerNonBlocking<Queue> c2;
-  ProducerNonBlocking<Queue> p(q);
   CHECK(ConsumerAttachReturnCode::Attached == c1.attach(q));
   CHECK(ConsumerAttachReturnCode::Attached == c2.attach(q));
-  q.start();
+  ProducerNonBlocking<Queue> p(q);
 
   {
     auto r = p.emplace(1u);

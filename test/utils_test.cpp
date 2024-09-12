@@ -16,7 +16,6 @@
 
 #include "common_test_utils.h"
 #include "detail/common.h"
-#include "detail/single_bit_reuse.h"
 #include <assert.h>
 #include <catch2/catch_all.hpp>
 #include <cstdint>
@@ -93,5 +92,4 @@ TEST_CASE("power_of_2_far_test")
   CHECK(power_of_2_far(5) == 8);
 }
 
-static_assert(std::atomic<integral_msb_always_0<size_t>>::is_always_lock_free);
 int main(int argc, char** argv) { return Catch::Session().run(argc, argv); }

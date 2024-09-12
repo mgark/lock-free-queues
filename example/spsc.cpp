@@ -40,10 +40,8 @@ int main()
   constexpr bool blocking = true;
   ConsumerBlocking<Queue> c(q);
   ProducerBlocking<Queue> p(q);
-  q.start();
 
   p.emplace(1u, 1u, 100.0, 'A');
-  c.consume([&q](const Order& o) mutable { std::cout << o; });
-
+  std::cout << *c.cbegin();
   return 0;
 }

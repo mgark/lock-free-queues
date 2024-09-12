@@ -31,26 +31,26 @@ TEST_CASE("MPMC functional test")
   ProducerBlocking<Queue> p1(q1);
   ProducerBlocking<Queue> p2(q2);
 
-  q1.start();
-  q2.start();
   {
     auto r = p1.emplace(1u, 1u, 100.0, 'A');
     CHECK(ProduceReturnCode::Published == r);
     r = p2.emplace(2u, 2u, 100.0, 'A');
     CHECK(ProduceReturnCode::Published == r);
   }
+
+  auto itc10 = c1[0].cbegin();
+  auto itc20 = c2[0].cbegin();
+  auto itc11 = c1[1].cbegin();
+  auto itc21 = c2[1].cbegin();
   {
-    auto r = c1[0].consume([](const Order& o) { std::cout << o; });
-    CHECK(ConsumeReturnCode::Consumed == r);
-    r = c2[0].consume([](const Order& o) { std::cout << o; });
-    CHECK(ConsumeReturnCode::Consumed == r);
-    r = c2[1].consume([](const Order& o) { std::cout << o; });
-    CHECK(ConsumeReturnCode::Consumed == r);
-    r = c1[1].consume([](const Order& o) { std::cout << o; });
-    CHECK(ConsumeReturnCode::Consumed == r);
+    CHECK(1u == itc10->id);
+    CHECK(1u == itc20->id);
+    CHECK(2u == itc11->id);
+    CHECK(2u == itc21->id);
   }
 }
 
+#ifndef _DISABLE_SYNTHETIC_ANYCAST_TEST_
 TEST_CASE("MPMC Anycasy Blocking consumer functional test")
 {
   using Queue = SPMCMulticastQueueReliableBounded<Order, 2, 2>;
@@ -105,14 +105,6 @@ TEST_CASE("MPMC Anycasy Blocking consumer functional test")
     auto r = c1.consume_raw(static_cast<void*>(storage));
     CHECK(ConsumeReturnCode::Consumed == r);
     CHECK(reinterpret_cast<Order*>(storage)->id == 4u);
-  }
-
-  {
-    q1.stop();
-    q2.stop();
-    alignas(Order) std::byte storage[sizeof(Order)];
-    auto r = c2.consume_raw(static_cast<void*>(storage));
-    CHECK(ConsumeReturnCode::Stopped == r);
   }
 }
 
@@ -171,15 +163,8 @@ TEST_CASE("MPMC Anycasy Non-Blocking consumer functional test")
     CHECK(ConsumeReturnCode::Consumed == r);
     CHECK(reinterpret_cast<Order*>(storage)->id == 4u);
   }
-
-  {
-    q1.stop();
-    q2.stop();
-    alignas(Order) std::byte storage[sizeof(Order)];
-    auto r = c2.consume_raw(static_cast<void*>(storage));
-    CHECK(ConsumeReturnCode::Stopped == r);
-  }
 }
+#endif
 
 TEST_CASE("Synchronized Blocking MPMC functional test")
 {
@@ -193,22 +178,19 @@ TEST_CASE("Synchronized Blocking MPMC functional test")
   ProducerBlocking<Queue> p1(q1);
   ProducerBlocking<Queue> p2(q1);
 
-  q1.start();
   {
     auto r = p1.emplace(1u, 1u, 100.0, 'A');
     CHECK(ProduceReturnCode::Published == r);
     r = p2.emplace(2u, 2u, 100.0, 'A');
     CHECK(ProduceReturnCode::Published == r);
   }
+  auto it1 = c1.cbegin();
+  auto it2 = c2.cbegin();
   {
-    auto r = c1.consume([](const Order& o) { std::cout << o; });
-    CHECK(ConsumeReturnCode::Consumed == r);
-    r = c2.consume([](const Order& o) { std::cout << o; });
-    CHECK(ConsumeReturnCode::Consumed == r);
-    r = c2.consume([](const Order& o) { std::cout << o; });
-    CHECK(ConsumeReturnCode::Consumed == r);
-    r = c1.consume([](const Order& o) { std::cout << o; });
-    CHECK(ConsumeReturnCode::Consumed == r);
+    CHECK(1u == it1->id);
+    CHECK(1u == it2->id);
+    CHECK(2u == (++it1)->id);
+    CHECK(2u == (++it2)->id);
   }
 }
 
@@ -225,11 +207,10 @@ TEST_CASE("Synchronized Non-Blocking MPMC functional test")
   ProducerNonBlocking<Queue> p1(q1);
   ProducerNonBlocking<Queue> p2(q1);
 
-  q1.start();
   {
     for (size_t i = 0; i < N; ++i)
     {
-      auto r = p1.emplace(1u, 1u, 100.0, 'A');
+      auto r = p1.emplace(i, 1u, 100.0, 'A');
       CHECK(ProduceReturnCode::Published == r);
     }
 
@@ -239,18 +220,18 @@ TEST_CASE("Synchronized Non-Blocking MPMC functional test")
     CHECK(ProduceReturnCode::SlowConsumer == r);
   }
 
+  auto it1 = c1.cbegin();
+  auto it2 = c2.cbegin();
   {
-    for (size_t i = 0; i < N; ++i)
-    {
-      auto r = c1.consume([](const Order& o) { CHECK(1 == o.id); });
-      CHECK(ConsumeReturnCode::Consumed == r);
-    }
+    for (size_t i = 0; i < N; ++i, ++it1)
+      CHECK(i == it1->id);
 
-    for (size_t i = 0; i < N; ++i)
-    {
-      auto r = c2.consume([](const Order& o) { CHECK(1 == o.id); });
-      CHECK(ConsumeReturnCode::Consumed == r);
-    }
+    CHECK(it1 == c1.cend());
+
+    for (size_t i = 0; i < N; ++i, ++it2)
+      CHECK(i == it2->id);
+
+    CHECK(it2 == c2.cend());
   }
 
   {
@@ -262,14 +243,10 @@ TEST_CASE("Synchronized Non-Blocking MPMC functional test")
 
   {
     // producer would continue publishing from the previous idx which failed before because the queue was full!
-    auto r = c1.consume([](const Order& o) { CHECK(o.id == 4); });
-    CHECK(ConsumeReturnCode::Consumed == r);
-    r = c2.consume([](const Order& o) { CHECK(o.id == 4); });
-    CHECK(ConsumeReturnCode::Consumed == r);
-    r = c2.consume([](const Order& o) { CHECK(o.id == 3); });
-    CHECK(ConsumeReturnCode::Consumed == r);
-    r = c1.consume([](const Order& o) { CHECK(o.id == 3); });
-    CHECK(ConsumeReturnCode::Consumed == r);
+    CHECK(4 == c1.cbegin()->id);
+    CHECK(4 == c2.cbegin()->id);
+    CHECK(3 == (++c1.cbegin())->id);
+    CHECK(3 == (++c2.cbegin())->id);
   }
 }
 
@@ -290,21 +267,22 @@ TEST_CASE(
 
   ProducerBlocking<Queue> p1(q1);
   ProducerBlocking<Queue> p2(q1);
-  q1.start();
 
   {
     for (size_t i = 0; i < N; ++i)
     {
-      auto r = p1.emplace(1u, 1u, 100.0, 'A');
+      auto r = p1.emplace(i, 1u, 100.0, 'A');
       CHECK(ProduceReturnCode::Published == r);
     }
   }
 
+  auto it1 = c1.cbegin();
   {
-    for (size_t i = 0; i < N; ++i)
+    for (size_t i = 0; i < N; ++i, ++it1)
     {
-      auto r = c1.consume([](const Order& o) { CHECK(1 == o.id); });
-      CHECK(ConsumeReturnCode::Consumed == r);
+      CHECK(i == it1->id);
+      if (i == N - 1)
+        break;
     }
   }
 
@@ -313,14 +291,10 @@ TEST_CASE(
     CHECK(ProduceReturnCode::Published == r);
     r = p2.emplace(3u, 3u, 100.0, 'A');
     CHECK(ProduceReturnCode::Published == r);
-  }
 
-  {
-    auto r = c1.consume([](const Order& o) { CHECK(o.id == 4); });
-    CHECK(ConsumeReturnCode::Consumed == r);
-
-    r = c2.consume([](const Order& o) { CHECK(o.id == 3); });
-    CHECK(ConsumeReturnCode::Consumed == r);
+    CHECK((++it1)->id == 4);
+    auto it2 = c2.cbegin();
+    CHECK(it2->id == 3);
   }
 }
 
@@ -334,10 +308,9 @@ TEST_CASE("MPMC functional test - Blocking Peek and Skip")
   constexpr bool blocking = true;
   ConsumerBlocking<Queue> c1;
   ConsumerBlocking<Queue> c2;
-  ProducerBlocking<Queue> p(q);
   CHECK(ConsumerAttachReturnCode::Attached == c1.attach(q));
   CHECK(ConsumerAttachReturnCode::Attached == c2.attach(q));
-  q.start();
+  ProducerBlocking<Queue> p(q);
 
   {
     auto r = p.emplace(1u);

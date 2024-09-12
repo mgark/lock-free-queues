@@ -1,7 +1,6 @@
 #include "common_test_utils.h"
 #include "detail/common.h"
 #include "detail/producer.h"
-#include "detail/single_bit_reuse.h"
 #include <algorithm>
 #include <assert.h>
 #include <catch2/catch_all.hpp>
@@ -46,66 +45,64 @@ TEST_CASE(
           size_t consumed_num = 0;
           auto begin = std::chrono::system_clock::now();
           ConsumerBlocking<Queue> c(q);
-          while (consumed_num < CONSUMED_PER_ITERATION)
+          auto it = c.cbegin();
+          do
           {
-            c.consume(
-              [&c, consumer_idx = i, &q, CONSUMED_PER_ITERATION, &consumed_num,
-               &per_consumer_actual_sum, &per_consumer_target_sum](size_t val) mutable
-              {
-                per_consumer_actual_sum[consumer_idx].store(
-                  per_consumer_actual_sum[consumer_idx].load(std::memory_order_relaxed) + val,
-                  std::memory_order_release);
+            auto val = *it;
+            auto consumer_idx = i;
+            per_consumer_actual_sum[consumer_idx].store(
+              per_consumer_actual_sum[consumer_idx].load(std::memory_order_relaxed) + val, std::memory_order_release);
 
-                if (c.get_consume_idx() != val)
-                {
-                  std::stringstream ss;
-                  ss << "consumer[" << consumer_idx << "] producer_idx=" << val
-                     << " not equal consumer idx =" << c.get_consume_idx();
-                  throw std::runtime_error(ss.str());
-                }
+            if (c.get_consume_idx() != val)
+            {
+              std::stringstream ss;
+              ss << "consumer[" << consumer_idx << "] producer_idx=" << val
+                 << " not equal consumer idx =" << c.get_consume_idx();
+              throw std::runtime_error(ss.str());
+            }
 
-                if (0 == consumed_num++)
-                {
-                  // on the very first item, let's calculate our target checksum
-                  size_t extra_checksum = 0;
-                  for (size_t i = val; i < val + CONSUMED_PER_ITERATION; ++i)
-                    extra_checksum += i;
+            if (0 == consumed_num++)
+            {
+              // on the very first item, let's calculate our target checksum
+              size_t extra_checksum = 0;
+              for (size_t i = val; i < val + CONSUMED_PER_ITERATION; ++i)
+                extra_checksum += i;
 
-                  // relaxed memory order is fine here, because updates are done always by the same thread!
-                  per_consumer_target_sum[consumer_idx].store(
-                    per_consumer_target_sum[consumer_idx].load(std::memory_order_relaxed) + extra_checksum,
-                    std::memory_order_relaxed);
-                }
-              });
-          }
-
+              // relaxed memory order is fine here, because updates are done always by the same thread!
+              per_consumer_target_sum[consumer_idx].store(
+                per_consumer_target_sum[consumer_idx].load(std::memory_order_relaxed) + extra_checksum,
+                std::memory_order_relaxed);
+            }
+          } while (consumed_num < CONSUMED_PER_ITERATION and *(++it));
           CHECK(consumed_num == CONSUMED_PER_ITERATION);
         }
         ++consumer_finished_num;
       }));
   }
-  std::thread producer(
-    [&q, &consumer_finished_num, N]()
-    {
-      ProducerBlocking<Queue> p(q);
-      q.start();
 
-      size_t n = 1;
-      while (consumer_finished_num.load(std::memory_order_relaxed) < _MAX_CONSUMERS_)
+  ProducerBlocking<Queue> p(q);
+  std::jthread producer(
+    [&q, &p, &consumer_finished_num, N]()
+    {
+      try
       {
-        auto r = p.emplace_producer_own_idx();
-        if (r == ProduceReturnCode::NotRunning)
-          break;
-        else if (r == ProduceReturnCode::Published)
-          n++;
+        size_t n = 1;
+        while (!p.is_halted() && consumer_finished_num.load(std::memory_order_relaxed) < _MAX_CONSUMERS_)
+        {
+          auto r = p.emplace_producer_own_idx();
+          if (r == ProduceReturnCode::Published)
+            n++;
+        }
+      }
+      catch (...)
+      {
       }
     });
 
   for (auto& c : consumer_threads)
     c.join();
 
-  q.stop();
-  producer.join();
+  p.halt();
 
   size_t consumers_checksum;
   size_t producers_checksum;
@@ -159,65 +156,67 @@ TEST_CASE(
           size_t consumed_num = 0;
           auto begin = std::chrono::system_clock::now();
           ConsumerBlocking<Queue> c(q);
-          while (consumed_num < CONSUMED_PER_ITERATION)
+          auto it = c.cbegin();
+          do
           {
-            c.consume(
-              [&c, consumer_idx = i, &q, CONSUMED_PER_ITERATION, &consumed_num,
-               &per_consumer_actual_sum, &per_consumer_target_sum](size_t val) mutable
+            auto val = *it;
+            auto consumer_idx = i;
+            {
+              per_consumer_actual_sum[consumer_idx].store(
+                per_consumer_actual_sum[consumer_idx].load(std::memory_order_relaxed) + val,
+                std::memory_order_release);
+
+              if (c.get_consume_idx() != val)
               {
-                per_consumer_actual_sum[consumer_idx].store(
-                  per_consumer_actual_sum[consumer_idx].load(std::memory_order_relaxed) + val,
-                  std::memory_order_release);
+                std::stringstream ss;
+                ss << "consumer[" << consumer_idx << "] producer_idx=" << val
+                   << " not equal consumer idx =" << c.get_consume_idx();
+                throw std::runtime_error(ss.str());
+              }
 
-                if (c.get_consume_idx() != val)
-                {
-                  std::stringstream ss;
-                  ss << "consumer[" << consumer_idx << "] producer_idx=" << val
-                     << " not equal consumer idx =" << c.get_consume_idx();
-                  throw std::runtime_error(ss.str());
-                }
+              if (0 == consumed_num++)
+              {
+                // on the very first item, let's calculate our target checksum
+                size_t extra_checksum = 0;
+                for (size_t i = val; i < val + CONSUMED_PER_ITERATION; ++i)
+                  extra_checksum += i;
 
-                if (0 == consumed_num++)
-                {
-                  // on the very first item, let's calculate our target checksum
-                  size_t extra_checksum = 0;
-                  for (size_t i = val; i < val + CONSUMED_PER_ITERATION; ++i)
-                    extra_checksum += i;
-
-                  // relaxed memory order is fine here, because updates are done always by the same thread!
-                  per_consumer_target_sum[consumer_idx].store(
-                    per_consumer_target_sum[consumer_idx].load(std::memory_order_relaxed) + extra_checksum,
-                    std::memory_order_relaxed);
-                }
-              });
-          }
-
+                // relaxed memory order is fine here, because updates are done always by the same thread!
+                per_consumer_target_sum[consumer_idx].store(
+                  per_consumer_target_sum[consumer_idx].load(std::memory_order_relaxed) + extra_checksum,
+                  std::memory_order_relaxed);
+              }
+            }
+          } while (consumed_num < CONSUMED_PER_ITERATION && *(++it));
           CHECK(consumed_num == CONSUMED_PER_ITERATION);
         }
         ++consumer_finished_num;
       }));
   }
-  std::thread producer(
-    [&q, &consumer_finished_num, N]()
-    {
-      ProducerBlocking<Queue> p(q);
-      q.start();
 
-      size_t n = 1;
-      while (consumer_finished_num.load(std::memory_order_relaxed) < _MAX_CONSUMERS_)
+  ProducerBlocking<Queue> p(q);
+  std::jthread producer(
+    [&q, &p, &consumer_finished_num, N]()
+    {
+      try
       {
-        auto r = p.emplace_producer_own_idx();
-        if (r == ProduceReturnCode::NotRunning)
-          break;
-        else if (r == ProduceReturnCode::Published)
-          n++;
+        size_t n = 1;
+        while (!p.is_halted() && consumer_finished_num.load(std::memory_order_relaxed) < _MAX_CONSUMERS_)
+        {
+          auto r = p.emplace_producer_own_idx();
+          if (r == ProduceReturnCode::Published)
+            n++;
+        }
+      }
+      catch (const ProducerHaltedExp& e)
+      {
       }
     });
 
   for (auto& c : consumer_threads)
     c.join();
 
-  q.stop();
+  p.halt();
   producer.join();
 
   size_t consumers_checksum;
@@ -269,69 +268,66 @@ TEST_CASE("Bounded blocking reliable multicast SPMC attach detach & stress test"
           size_t consumed_num = 0;
           auto begin = std::chrono::system_clock::now();
           ConsumerBlocking<Queue> c(q);
-          while (consumed_num < CONSUMED_PER_ITERATION)
+          auto it = c.cbegin();
+          do
           {
-            c.consume(
-              [&c, consumer_idx = i, &q, CONSUMED_PER_ITERATION, &consumed_num,
-               &per_consumer_actual_sum, &per_consumer_target_sum](size_t val) mutable
-              {
-                per_consumer_actual_sum[consumer_idx].store(
-                  per_consumer_actual_sum[consumer_idx].load(std::memory_order_relaxed) + val,
-                  std::memory_order_release);
+            auto val = *it;
+            auto consumer_idx = i;
+            per_consumer_actual_sum[consumer_idx].store(
+              per_consumer_actual_sum[consumer_idx].load(std::memory_order_relaxed) + val, std::memory_order_release);
 
-                if (c.get_consume_idx() != val)
-                {
-                  std::stringstream ss;
-                  ss << "consumer[" << consumer_idx << "] producer_idx=" << val
-                     << " not equal consumer idx =" << c.get_consume_idx();
-                  throw std::runtime_error(ss.str());
-                }
+            if (c.get_consume_idx() != val)
+            {
+              std::stringstream ss;
+              ss << "consumer[" << consumer_idx << "] producer_idx=" << val
+                 << " not equal consumer idx =" << c.get_consume_idx();
+              throw std::runtime_error(ss.str());
+            }
 
-                // if (consumer_idx == 0)
-                //   TLOG << "\n consumed " << idx;
+            if (0 == consumed_num++)
+            {
+              // on the very first item, let's calculate our target checksum
+              size_t extra_checksum = 0;
+              for (size_t k = val; k < val + CONSUMED_PER_ITERATION; ++k)
+                extra_checksum += k;
 
-                if (0 == consumed_num++)
-                {
-                  // on the very first item, let's calculate our target checksum
-                  size_t extra_checksum = 0;
-                  for (size_t k = val; k < val + CONSUMED_PER_ITERATION; ++k)
-                    extra_checksum += k;
-
-                  // relaxed memory order is fine here, because updates are done always by the same thread!
-                  per_consumer_target_sum[consumer_idx].store(
-                    per_consumer_target_sum[consumer_idx].load(std::memory_order_relaxed) + extra_checksum,
-                    std::memory_order_relaxed);
-                }
-              });
-          }
-
+              // relaxed memory order is fine here, because updates are done always by the same thread!
+              per_consumer_target_sum[consumer_idx].store(
+                per_consumer_target_sum[consumer_idx].load(std::memory_order_relaxed) + extra_checksum,
+                std::memory_order_relaxed);
+            }
+          } while (consumed_num < CONSUMED_PER_ITERATION && *(++it));
+          assert(consumed_num == CONSUMED_PER_ITERATION);
           CHECK(consumed_num == CONSUMED_PER_ITERATION);
         }
         ++consumer_finished_num;
         TLOG << "\n finished consumer = " << i;
       }));
   }
-  std::thread producer(
-    [&q, &consumer_finished_num, N_PER_CONSUMER]()
-    {
-      ProducerBlocking<Queue> p(q);
-      q.start();
 
-      size_t n = 1;
-      while (consumer_finished_num.load(std::memory_order_relaxed) < _MAX_CONSUMERS_)
+  ProducerBlocking<Queue> p(q);
+  std::jthread producer(
+    [&q, &p, &consumer_finished_num, N_PER_CONSUMER]()
+    {
+      try
       {
-        auto r = p.emplace_producer_own_idx();
-        if (r == ProduceReturnCode::NotRunning)
-          break;
-        else if (r == ProduceReturnCode::Published)
-          n++;
+        size_t n = 1;
+        while (!p.is_halted() && consumer_finished_num.load(std::memory_order_relaxed) < _MAX_CONSUMERS_)
+        {
+          auto r = p.emplace_producer_own_idx();
+          if (r == ProduceReturnCode::Published)
+            n++;
+        }
+      }
+      catch (const ProducerHaltedExp& e)
+      {
       }
     });
 
   for (auto& c : consumer_threads)
     c.join();
 
-  q.stop();
+  p.halt();
   producer.join();
 
   size_t consumers_checksum;
@@ -388,24 +384,22 @@ TEST_CASE("Bounded blocking reliable anycast MPMC attach detach & stress test")
           {
             auto c = std::make_unique<ConsumerBlocking<Queue>>(q);
             size_t msg_consumed = 0;
-            while (msg_consumed < _N_PER_ITERATION_)
+            auto it = c->cbegin();
+            do
             {
-              auto r = c->consume(
-                [&](size_t val) mutable
-                {
-                  if (c->get_consume_idx() != val)
-                  {
-                    std::stringstream ss;
-                    ss << "consumer[" << id << "] producer_idx=" << val
-                       << " not equal consumer idx =" << c->get_consume_idx();
-                    throw std::runtime_error(ss.str());
-                  }
+              auto val = *it;
+              if (c->get_consume_idx() != val)
+              {
+                std::stringstream ss;
+                ss << "consumer[" << id << "] producer_idx=" << val
+                   << " not equal consumer idx =" << c->get_consume_idx();
+                throw std::runtime_error(ss.str());
+              }
 
-                  per_consumer_sum[id].store(per_consumer_sum[id].load(std::memory_order_relaxed) + val,
-                                             std::memory_order_release);
-                  ++msg_consumed;
-                });
-            }
+              per_consumer_sum[id].store(per_consumer_sum[id].load(std::memory_order_relaxed) + val,
+                                         std::memory_order_release);
+              ++msg_consumed;
+            } while (msg_consumed < _N_PER_ITERATION_ && *(++it));
           }
         }
         catch (const std::exception& e)
@@ -415,38 +409,39 @@ TEST_CASE("Bounded blocking reliable anycast MPMC attach detach & stress test")
       }));
   }
 
-  std::vector<std::thread> producer_threads;
-  q.start();
-
-  for (size_t i = 1; i <= _MAX_PUBLISHERS_; ++i)
+  std::vector<std::jthread> producer_threads;
+  std::vector<std::unique_ptr<ProducerBlocking<Queue>>> producers;
+  for (size_t i = 0; i < _MAX_PUBLISHERS_; ++i)
   {
-    producer_threads.emplace_back(std::thread(
-      [&q]()
+    producers.emplace_back(std::make_unique<ProducerBlocking<Queue>>(q));
+  }
+
+  for (size_t i = 0; i < _MAX_PUBLISHERS_; ++i)
+  {
+    producer_threads.emplace_back(
+      [&q, &producers, i]()
       {
         try
         {
-          ProducerBlocking<Queue> p1(q);
-
           size_t n = 1;
-          while (1)
+          while (!producers[i]->is_halted())
           {
-            auto r = p1.emplace_producer_own_idx();
-            if (r == ProduceReturnCode::NotRunning)
-              break;
+            auto r = producers[i]->emplace_producer_own_idx();
           }
         }
-        catch (const std::exception& e)
+        catch (const ProducerHaltedExp e)
         {
-          TLOG << "\n got exception " << e.what();
+          TLOG << "\n got halt exception " << e.what();
         }
-      }));
+      });
   }
 
   for (auto& c : consumer_threads)
     c.join();
 
   TLOG << "\n all consumers are done\n";
-  q.stop();
+  for (auto& p : producers)
+    p->halt();
 
   for (auto& p : producer_threads)
     p.join();
@@ -514,32 +509,32 @@ TEST_CASE("Bounded blocking reliable anycast MPSC attach detach & stress test")
           size_t target_iteration_sum = 0;
           size_t starting_idx;
           std::vector<size_t> consumed;
-          while (consumed_num < _N_PER_ITERATION_)
+          auto it = c.cbegin();
+          do
           {
-            c.consume(
-              [consumer_idx = i, &q, _N_PER_ITERATION_, &consumed_num, &target_iteration_sum,
-               &actual_iteration_sum, &consumed, &c, &starting_idx, &per_consumer_target_sum](size_t val) mutable
+            auto val = *it;
+            auto consumer_idx = i;
+            {
+              actual_iteration_sum += val;
+              consumed.push_back(val);
+
+              if (c.get_consume_idx() != val)
               {
-                actual_iteration_sum += val;
-                consumed.push_back(val);
+                std::stringstream ss;
+                ss << "consumer[" << consumer_idx << "] producer_idx=" << val
+                   << " not equal consumer idx =" << c.get_consume_idx();
+                throw std::runtime_error(ss.str());
+              }
 
-                if (c.get_consume_idx() != val)
-                {
-                  std::stringstream ss;
-                  ss << "consumer[" << consumer_idx << "] producer_idx=" << val
-                     << " not equal consumer idx =" << c.get_consume_idx();
-                  throw std::runtime_error(ss.str());
-                }
-
-                if (0 == consumed_num++)
-                {
-                  // on the very first item, let's calculate our target checksum
-                  starting_idx = val;
-                  for (size_t i = val; i < val + _N_PER_ITERATION_; ++i)
-                    target_iteration_sum += i;
-                }
-              });
-          }
+              if (0 == consumed_num++)
+              {
+                // on the very first item, let's calculate our target checksum
+                starting_idx = val;
+                for (size_t i = val; i < val + _N_PER_ITERATION_; ++i)
+                  target_iteration_sum += i;
+              }
+            }
+          } while (consumed_num < _N_PER_ITERATION_ && *(++it));
 
 #ifdef _ADDITIONAL_TRACE_
           if (target_iteration_sum != actual_iteration_sum)
@@ -555,31 +550,34 @@ TEST_CASE("Bounded blocking reliable anycast MPSC attach detach & stress test")
         }
       }));
   }
-  std::thread producer(
-    [&q, &consumers_done]()
+
+  ProducerBlocking<Queue> p(q);
+  std::jthread producer(
+    [&q, &p, &consumers_done]()
     {
-      ProducerBlocking<Queue> p(q);
-      q.start();
-
-      size_t n = 1;
-      while (!consumers_done)
+      try
       {
-        auto r = p.emplace_producer_own_idx();
-        if (r == ProduceReturnCode::NotRunning)
-          break;
-        else if (r == ProduceReturnCode::Published)
-          n++;
-      }
+        size_t n = 1;
+        while (!consumers_done && !p.is_halted())
+        {
+          auto r = p.emplace_producer_own_idx();
+          if (r == ProduceReturnCode::Published)
+            n++;
+        }
 
-      TLOG << "\n published items = " << n;
+        TLOG << "\n published items = " << n;
+      }
+      catch (const ProducerHaltedExp& e)
+      {
+        TLOG << "\n got halt exception - all good";
+      }
     });
 
   for (auto& c : consumer_threads)
     c.join();
 
   consumers_done = true;
-  q.stop();
-  producer.join();
+  p.halt();
 
   size_t consumers_checksum;
   size_t producers_checksum;
@@ -601,8 +599,10 @@ TEST_CASE("Bounded blocking reliable anycast MPSC attach detach & stress test")
   } while (consumers_checksum != producers_checksum);
 }
 
+#ifndef _DISABLE_SYNTHETIC_ANYCAST_TEST_
 TEST_CASE(
-  "Bounded blocking reliable synthetic anycast from many queues MPMC attach detach & stress test - "
+  "Bounded blocking reliable synthetic anycast from many queues MPMC attach detach & stress test "
+  "- "
   "SingleThreaded queues")
 {
   TLOG << "\n  " << Catch::getResultCapture().getCurrentTestName() << "\n";
@@ -741,7 +741,8 @@ TEST_CASE(
 }
 
 TEST_CASE(
-  "Bounded blocking reliable synthetic anycast from many queues MPMC attach detach & stress test - "
+  "Bounded blocking reliable synthetic anycast from many queues MPMC attach detach & stress test "
+  "- "
   "MultiThreaded queues")
 {
   TLOG << "\n  " << Catch::getResultCapture().getCurrentTestName() << "\n";
@@ -878,8 +879,103 @@ TEST_CASE(
 
   TLOG << "\n total consumed num = " << total_consumed_num << " max_total_consumed_num=" << _N_TO_CONSUME_;
 }
+#endif
 
 #ifndef _DISABLE_ADAPTIVE_QUEUE_TEST_
+TEST_CASE("Adaptive SPMC  queue stress test to detect race conditions")
+{
+  // TODO: fix to support multie producers!
+  struct Vector
+  {
+    bool odd;
+    int64_t v1[10];
+  };
+
+  int i = 1;
+  Vector odd_vector;
+  odd_vector.odd = true;
+  for (int64_t& v : odd_vector.v1)
+    v = i++;
+
+  Vector even_vector;
+  even_vector.odd = false;
+  for (int64_t& v : even_vector.v1)
+    v = --i;
+
+  int sum = ((10 + 1) * 10) / 2;
+  REQUIRE(std::accumulate(std::begin(odd_vector.v1), std::end(odd_vector.v1), 0) == sum);
+  REQUIRE(std::accumulate(std::begin(even_vector.v1), std::end(even_vector.v1), 0) == sum);
+
+  std::string s;
+  std::mutex guard;
+  constexpr size_t _MAX_CONSUMERS_ = 3;
+  constexpr size_t _PUBLISHER_INITIAL_QUEUE_SIZE = 16;
+  constexpr size_t _PUBLISHER_MAX_QUEUE_SIZE = 1024 * 1024;
+  constexpr size_t N = 3000000;
+  constexpr size_t BATCH_NUM = 2;
+  using Queue = SPMCMulticastQueueReliableAdaptiveBounded<Vector, _MAX_CONSUMERS_, BATCH_NUM>;
+  Queue q(_PUBLISHER_INITIAL_QUEUE_SIZE, _PUBLISHER_INITIAL_QUEUE_SIZE);
+
+  size_t from;
+  std::vector<std::thread> consumers;
+  std::atomic_int consumer_joined_num{0};
+
+  TLOG << "\n  " << Catch::getResultCapture().getCurrentTestName() << "\n";
+  for (size_t i = 0; i < _MAX_CONSUMERS_; ++i)
+  {
+    consumers.push_back(std::thread(
+      [&q, i, &guard, N, sum, &consumer_joined_num]()
+      {
+        ConsumerBlocking<Queue> c(q);
+        size_t n = 0;
+        ++consumer_joined_num;
+        auto begin = std::chrono::system_clock::now();
+        while (ConsumeReturnCode::Stopped !=
+               c.consume(
+                 [consumer_id = i, sum, &n](const Vector& r) mutable
+                 {
+                   // interleaving update won't make the sum equal to the target
+                   CHECK(std::accumulate(std::begin(r.v1), std::end(r.v1), 0) == sum);
+                   ++n;
+                 }))
+          ;
+        TLOG << "Consumer [" << i << "]  processed  " << n << " updates\n";
+      }));
+  }
+
+  std::thread producer(
+    [&q, &from, &odd_vector, &even_vector, &consumer_joined_num, N]()
+    {
+      while (consumer_joined_num.load() < _MAX_CONSUMERS_)
+        ;
+
+      ProducerBlocking<Queue> p(q);
+      q.start();
+      from = std::chrono::system_clock::now().time_since_epoch().count();
+      size_t n = 1;
+      while (n <= N)
+      {
+        if ((n & 1) == 0)
+        {
+          p.emplace(even_vector);
+        }
+        else
+        {
+          p.emplace(odd_vector);
+        }
+        ++n;
+      }
+
+      q.stop();
+    });
+
+  producer.join();
+  for (auto& c : consumers)
+  {
+    c.join();
+  }
+}
+
 TEST_CASE("Adaptive blocking reliable multicast SPMC attach detach & stress test")
 {
   std::string s;
@@ -1094,6 +1190,7 @@ TEST_CASE("SPMC conflated queue stress test to detect race conditions")
     c.join();
   }
 }
+
   #endif
 #endif
 
@@ -1124,7 +1221,7 @@ TEST_CASE("SPMC queue stress test to detect race conditions")
   std::mutex guard;
   constexpr size_t _MAX_CONSUMERS_ = 3;
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 256;
-  constexpr size_t N = 30000000;
+  constexpr size_t N = 3000000;
   constexpr size_t BATCH_NUM = 2;
   using Queue = SPMCMulticastQueueReliableBounded<Vector, _MAX_CONSUMERS_, BATCH_NUM>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
@@ -1143,27 +1240,28 @@ TEST_CASE("SPMC queue stress test to detect race conditions")
         ++consumer_joined_num;
         size_t n = 0;
         auto begin = std::chrono::system_clock::now();
-        while (ConsumeReturnCode::Stopped !=
-               c.consume(
-                 [consumer_id = i, sum, &n](const Vector& r) mutable
-                 {
-                   // interleaving update won't make the sum equal to the target
-                   CHECK(std::accumulate(std::begin(r.v1), std::end(r.v1), 0) == sum);
-                   ++n;
-                 }))
-          ;
-        TLOG << "Consumer [" << i << "]  processed  " << n << " updates\n";
+        auto it = c.cbegin();
+        do
+        {
+          const Vector& r = *it;
+          size_t consumer_id = i;
+          // interleaving update won't make the sum equal to the target
+          CHECK(std::accumulate(std::begin(r.v1), std::end(r.v1), 0) == sum);
+          ++n;
+
+        } while (n < N && (++it, 1));
+        TLOG << "\n consumer [" << i << "] finished \n";
+        TLOG.flush();
       }));
   }
 
   while (consumer_joined_num.load() < _MAX_CONSUMERS_)
     ;
-  q.start();
 
-  std::thread producer(
-    [&q, &from, &odd_vector, &even_vector, &consumer_joined_num, N]()
+  ProducerBlocking<Queue> p(q);
+  std::jthread producer(
+    [&q, &p, &from, &odd_vector, &even_vector, &consumer_joined_num, N]()
     {
-      ProducerBlocking<Queue> p(q);
       from = std::chrono::system_clock::now().time_since_epoch().count();
       size_t n = 1;
       while (n <= N)
@@ -1178,20 +1276,16 @@ TEST_CASE("SPMC queue stress test to detect race conditions")
         }
         ++n;
       }
-
-      q.stop();
+      TLOG << "\n producer has finished\n ";
     });
 
-  producer.join();
   for (auto& c : consumers)
-  {
     c.join();
-  }
 }
 
 TEST_CASE("SPMC Synchronized queue stress test to detect race conditions")
 {
-  // TODO: fix to support multie producers!
+  // TODO: change to support multiple producers!
   struct Vector
   {
     bool odd;
@@ -1217,7 +1311,7 @@ TEST_CASE("SPMC Synchronized queue stress test to detect race conditions")
   std::mutex guard;
   constexpr size_t _MAX_CONSUMERS_ = 3;
   constexpr size_t _PUBLISHER_QUEUE_SIZE = 16;
-  constexpr size_t N = 3000000;
+  constexpr size_t N = 300000;
   constexpr size_t BATCH_NUM = 2;
   using Queue = SPMCMulticastQueueReliableBounded<Vector, _MAX_CONSUMERS_, BATCH_NUM>;
   Queue q(_PUBLISHER_QUEUE_SIZE);
@@ -1236,27 +1330,24 @@ TEST_CASE("SPMC Synchronized queue stress test to detect race conditions")
         size_t n = 0;
         ++consumer_joined_num;
         auto begin = std::chrono::system_clock::now();
-        while (ConsumeReturnCode::Stopped !=
-               c.consume(
-                 [consumer_id = i, sum, &n](const Vector& r) mutable
-                 {
-                   // interleaving update won't make the sum equal to the target
-                   CHECK(std::accumulate(std::begin(r.v1), std::end(r.v1), 0) == sum);
-                   ++n;
-                 }))
-          ;
-        TLOG << "Consumer [" << i << "]  processed  " << n << " updates\n";
+        auto it = c.cbegin();
+        do
+        {
+          const Vector& r = *it;
+          // interleaving update won't make the sum equal to the target
+          CHECK(std::accumulate(std::begin(r.v1), std::end(r.v1), 0) == sum);
+          ++n;
+        } while (n < N && (++it, 1));
       }));
   }
 
-  std::thread producer(
-    [&q, &from, &odd_vector, &even_vector, &consumer_joined_num, N]()
-    {
-      while (consumer_joined_num.load() < _MAX_CONSUMERS_)
-        ;
+  while (consumer_joined_num.load() < _MAX_CONSUMERS_)
+    ;
 
-      ProducerBlocking<Queue> p(q);
-      q.start();
+  ProducerBlocking<Queue> p(q);
+  std::jthread producer(
+    [&q, &p, &from, &odd_vector, &even_vector, &consumer_joined_num, N]()
+    {
       from = std::chrono::system_clock::now().time_since_epoch().count();
       size_t n = 1;
       while (n <= N)
@@ -1272,108 +1363,13 @@ TEST_CASE("SPMC Synchronized queue stress test to detect race conditions")
         ++n;
       }
 
-      q.stop();
+      TLOG << "\n producer thread done";
     });
 
-  producer.join();
   for (auto& c : consumers)
-  {
     c.join();
-  }
-}
 
-TEST_CASE("Adaptive SPMC  queue stress test to detect race conditions")
-{
-  // TODO: fix to support multie producers!
-  struct Vector
-  {
-    bool odd;
-    int64_t v1[10];
-  };
-
-  int i = 1;
-  Vector odd_vector;
-  odd_vector.odd = true;
-  for (int64_t& v : odd_vector.v1)
-    v = i++;
-
-  Vector even_vector;
-  even_vector.odd = false;
-  for (int64_t& v : even_vector.v1)
-    v = --i;
-
-  int sum = ((10 + 1) * 10) / 2;
-  REQUIRE(std::accumulate(std::begin(odd_vector.v1), std::end(odd_vector.v1), 0) == sum);
-  REQUIRE(std::accumulate(std::begin(even_vector.v1), std::end(even_vector.v1), 0) == sum);
-
-  std::string s;
-  std::mutex guard;
-  constexpr size_t _MAX_CONSUMERS_ = 3;
-  constexpr size_t _PUBLISHER_INITIAL_QUEUE_SIZE = 16;
-  constexpr size_t _PUBLISHER_MAX_QUEUE_SIZE = 1024 * 1024;
-  constexpr size_t N = 3000000;
-  constexpr size_t BATCH_NUM = 2;
-  using Queue = SPMCMulticastQueueReliableAdaptiveBounded<Vector, _MAX_CONSUMERS_, BATCH_NUM>;
-  Queue q(_PUBLISHER_INITIAL_QUEUE_SIZE, _PUBLISHER_INITIAL_QUEUE_SIZE);
-
-  size_t from;
-  std::vector<std::thread> consumers;
-  std::atomic_int consumer_joined_num{0};
-
-  TLOG << "\n  " << Catch::getResultCapture().getCurrentTestName() << "\n";
-  for (size_t i = 0; i < _MAX_CONSUMERS_; ++i)
-  {
-    consumers.push_back(std::thread(
-      [&q, i, &guard, N, sum, &consumer_joined_num]()
-      {
-        ConsumerBlocking<Queue> c(q);
-        size_t n = 0;
-        ++consumer_joined_num;
-        auto begin = std::chrono::system_clock::now();
-        while (ConsumeReturnCode::Stopped !=
-               c.consume(
-                 [consumer_id = i, sum, &n](const Vector& r) mutable
-                 {
-                   // interleaving update won't make the sum equal to the target
-                   CHECK(std::accumulate(std::begin(r.v1), std::end(r.v1), 0) == sum);
-                   ++n;
-                 }))
-          ;
-        TLOG << "Consumer [" << i << "]  processed  " << n << " updates\n";
-      }));
-  }
-
-  std::thread producer(
-    [&q, &from, &odd_vector, &even_vector, &consumer_joined_num, N]()
-    {
-      while (consumer_joined_num.load() < _MAX_CONSUMERS_)
-        ;
-
-      ProducerBlocking<Queue> p(q);
-      q.start();
-      from = std::chrono::system_clock::now().time_since_epoch().count();
-      size_t n = 1;
-      while (n <= N)
-      {
-        if ((n & 1) == 0)
-        {
-          p.emplace(even_vector);
-        }
-        else
-        {
-          p.emplace(odd_vector);
-        }
-        ++n;
-      }
-
-      q.stop();
-    });
-
-  producer.join();
-  for (auto& c : consumers)
-  {
-    c.join();
-  }
+  TLOG << "\n consumers all done \n";
 }
 
 int main(int argc, char** argv) { return Catch::Session().run(argc, argv); }

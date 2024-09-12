@@ -39,16 +39,9 @@
 #include <type_traits>
 #include <unistd.h>
 
-enum class ProducerKind
-{
-  SingleThreaded,
-  Synchronized
-};
-
 enum class ProduceReturnCode
 {
   Published,
-  NotRunning,
   SlowConsumer,
   NoConsumers,
   SlowPublisher
@@ -56,7 +49,7 @@ enum class ProduceReturnCode
 
 enum class ConsumerAttachReturnCode
 {
-  Stopped,
+  NoProducers,
   ConsumerLimitReached,
   AlreadyAttached,
   Attached
@@ -64,7 +57,6 @@ enum class ConsumerAttachReturnCode
 
 enum class ProducerAttachReturnCode
 {
-  Stopped,
   ProducerLimitReached,
   AlreadyAttached,
   Attached
@@ -74,15 +66,7 @@ enum class ConsumeReturnCode
 {
   NothingToConsume,
   Consumed,
-  Stopped,
   SlowConsumer // note that for conflated queues it means that producer warped as consumer was still trying to consume a value
-};
-
-enum class QueueState
-{
-  Created,
-  Running,
-  Stopped
 };
 
 // the order in how numbers are assigned does matter!
@@ -97,6 +81,9 @@ constexpr size_t PRODUCER_JOIN_INPROGRESS = PRODUCER_JOIN_REQUESTED - 2;
 constexpr size_t PRODUCER_JOINED = PRODUCER_JOIN_INPROGRESS - 3;
 constexpr size_t NEXT_PRODUCER_IDX_NEEDED = PRODUCER_JOINED - 4;
 
+template <const char[]>
+struct fail_to_compile;
+
 struct VoidType
 {
 };
@@ -106,6 +93,14 @@ class QueueStoppedExp : public std::exception
 };
 
 class SlowConsumerExp : public std::exception
+{
+};
+
+class ConsumerHaltedExp : public std::exception
+{
+};
+
+class ProducerHaltedExp : public std::exception
 {
 };
 
@@ -198,11 +193,39 @@ size_t map_index(size_t original_idx)
   return original_idx - idx + window_cache_line_idx * ItemsPerCacheLine + cache_line_idx;
 }
 
+template <std::integral T, size_t bits_num = sizeof(T) * 8>
+std::array<T, bits_num> generate_bit_masks_with_single_bit_1()
+{
+  std::array<T, bits_num> result;
+  for (size_t i = 0; i < bits_num; ++i)
+    result[i] = T(1u) << (bits_num - i - 1);
+
+  return result;
+}
+
+template <std::integral T, size_t bits_num = sizeof(T) * 8>
+std::array<T, bits_num> generate_bit_masks_with_single_bit_0()
+{
+  std::array<T, bits_num> result = generate_bit_masks_with_single_bit_1<T>();
+  for (size_t i = 0; i < bits_num; ++i)
+    result[i] = ~result[i];
+
+  return result;
+}
+
+template <class T>
+inline auto single_bit_0_masks = generate_bit_masks_with_single_bit_0<T>();
+
+template <class T>
+inline auto single_bit_1_masks = generate_bit_masks_with_single_bit_1<T>();
+
 static constexpr size_t _CACHE_LINE_SIZE_ = 64;
 static constexpr size_t _CACHE_PREFETCH_SIZE_ = 128;
+static constexpr size_t _MEMCPY_OPTIMAL_BYTES_ = 256;
 
 #define _DISABLE_UNRELIABLE_MULTICAST_TEST_
-//#define _DISABLE_ADAPTIVE_QUEUE_TEST_
+#define _DISABLE_SYNTHETIC_ANYCAST_TEST_
+#define _DISABLE_ADAPTIVE_QUEUE_TEST_
 //#define _TRACE_STATS_
 //#define _EXTRA_RUNTIME_VERIFICATION_
 //#define _TRACE_PRODUCER_IDX_

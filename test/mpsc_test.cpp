@@ -28,8 +28,6 @@ TEST_CASE("MPSC functional test")
   ConsumerBlocking<Queue> c1[2] = {q1, q2};
   ProducerBlocking<Queue> p1;
   ProducerBlocking<Queue> p2;
-  q1.start();
-  q2.start();
   p1.attach(q1);
   p2.attach(q2);
   {
@@ -38,11 +36,12 @@ TEST_CASE("MPSC functional test")
     r = p2.emplace(2u, 2u, 100.0, 'A');
     CHECK(ProduceReturnCode::Published == r);
   }
+
+  auto it1 = c1[0].cbegin();
+  auto it2 = c1[1].cbegin();
   {
-    auto r = c1[0].consume([](const Order& o) { std::cout << o; });
-    CHECK(ConsumeReturnCode::Consumed == r);
-    r = c1[1].consume([](const Order& o) { std::cout << o; });
-    CHECK(ConsumeReturnCode::Consumed == r);
+    CHECK(1u == it1->id);
+    CHECK(2u == it2->id);
   }
 }
 

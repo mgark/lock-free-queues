@@ -22,6 +22,8 @@
 #include <memory>
 #include <string>
 
+#ifndef _DISABLE_ADAPTIVE_QUEUE_TEST_
+
 template <class T, class Derived, size_t _MAX_CONSUMER_N_, size_t _BATCH_NUM_, class Allocator, class VersionType>
 class SPMCMulticastQueueAdaptiveBase
 {
@@ -163,6 +165,9 @@ public:
 
   size_t max_queue_num() const { return max_queue_num_; }
 
+  // WARNING! implement properly!
+  const T* past_last_node() const { reinterpret_cast<const T*>(this->nodes_[0]); }
+
   void increment_queue_size(size_t new_sz)
   {
     current_sz_ = new_sz;
@@ -179,132 +184,6 @@ public:
     // only do that before start method is called
     Spinlock::scoped_lock autolock(slow_path_guard_);
     this->state_.store(QueueState::Running, std::memory_order_release);
-  }
-
-  template <class C>
-  requires std::is_trivially_copyable_v<T> ConsumeReturnCode consume_raw_blocking(size_t& queue_idx,
-                                                                                  void* dest, C& consumer)
-  {
-    QueueState state;
-    size_t version;
-    ConsumeReturnCode r;
-    Node* node;
-
-    do
-    {
-      size_t idx = consumer.consumer_next_idx_ & consumer.idx_mask_;
-      node = &this->nodes_[queue_idx][idx];
-      version = node->version_.load(std::memory_order_acquire);
-      r = static_cast<Derived&>(*this).consume_by_func(
-        idx, queue_idx, *node, version, consumer,
-        [dest](void* storage)
-        { std::memcpy(dest, std::launder(reinterpret_cast<T*>(storage)), sizeof(T)); });
-      if (r == ConsumeReturnCode::Consumed)
-        return r;
-
-      state = this->state_.load(std::memory_order_acquire);
-    } while (state == QueueState::Running && r == ConsumeReturnCode::NothingToConsume);
-
-    if (state == QueueState::Stopped)
-      return ConsumeReturnCode::Stopped;
-
-    return r;
-  }
-
-  template <class C>
-  ConsumeReturnCode consume_raw_non_blocking(size_t& queue_idx, void* dest, C& consumer)
-  {
-    size_t idx = consumer.consumer_next_idx_ & consumer.idx_mask_;
-    Node& node = this->nodes_[queue_idx][idx];
-    size_t version = node.version_.load(std::memory_order_acquire);
-    size_t prev_queue_idx = queue_idx;
-    auto r = static_cast<Derived&>(*this).consume_by_func(
-      idx, queue_idx, node, version, consumer,
-      [dest](void* storage)
-      { std::memcpy(dest, std::launder(reinterpret_cast<const T*>(storage)), sizeof(T)); });
-
-    if (r == ConsumeReturnCode::Consumed)
-    {
-      return r;
-    }
-    else
-    {
-      if (r == ConsumeReturnCode::NothingToConsume && prev_queue_idx != queue_idx)
-      {
-        // won't be max 2 calls in the worse case!
-        return consume_raw_non_blocking(queue_idx, dest, consumer);
-      }
-
-      QueueState state = this->state_.load(std::memory_order_acquire);
-      if (state == QueueState::Stopped)
-      {
-        return ConsumeReturnCode::Stopped;
-      }
-
-      return r;
-    }
-  }
-
-  template <class C, class F>
-  ConsumeReturnCode consume_blocking(size_t& queue_idx, C& consumer, F&& f)
-  {
-    size_t version;
-    ConsumeReturnCode r;
-    QueueState state;
-    Node* node;
-
-    do
-    {
-      size_t idx = consumer.consumer_next_idx_ & consumer.idx_mask_;
-      node = &this->nodes_[queue_idx][idx];
-      version = node->version_.load(std::memory_order_acquire);
-      r = static_cast<Derived&>(*this).consume_by_func(
-        idx, queue_idx, *node, version, consumer,
-        [f = std::forward<F>(f)](void* storage) mutable
-        { std::forward<F>(f)(*std::launder(reinterpret_cast<const T*>(storage))); });
-      if (r == ConsumeReturnCode::Consumed)
-        return r;
-
-      state = this->state_.load(std::memory_order_acquire);
-    } while (state == QueueState::Running && r == ConsumeReturnCode::NothingToConsume);
-
-    if (state == QueueState::Stopped)
-      return ConsumeReturnCode::Stopped;
-
-    return r;
-  }
-
-  template <class C, class F>
-  ConsumeReturnCode consume_non_blocking(size_t& queue_idx, C& consumer, F&& f)
-  {
-    size_t idx = consumer.consumer_next_idx_ & consumer.idx_mask_;
-    Node& node = this->nodes_[queue_idx][idx];
-    size_t prev_queue_idx = queue_idx;
-    size_t version = node.version_.load(std::memory_order_acquire);
-    auto r = static_cast<Derived&>(*this).consume_by_func(
-      idx, queue_idx, node, version, consumer,
-      [f = std::forward<F>(f)](void* storage) mutable
-      { std::forward<F>(f)(*std::launder(reinterpret_cast<const T*>(storage))); });
-
-    if (r == ConsumeReturnCode::Consumed)
-    {
-      return r;
-    }
-    else
-    {
-      if (r == ConsumeReturnCode::NothingToConsume && prev_queue_idx != queue_idx)
-      {
-        // won't be max 2 calls in the worse case!
-        // first call consume_by_func won't move (f) if there is an item readily available to consume!
-        return consume_non_blocking(queue_idx, consumer, std::forward<F>(f));
-      }
-
-      QueueState state = this->state_.load(std::memory_order_acquire);
-      if (state == QueueState::Stopped)
-        return ConsumeReturnCode::Stopped;
-
-      return r;
-    }
   }
 
   template <class C>
@@ -344,31 +223,6 @@ public:
     {
       return r;
     }
-  }
-
-  template <class C>
-  ConsumeReturnCode skip_blocking(size_t& queue_idx, C& consumer)
-  {
-    ConsumeReturnCode r;
-    size_t version;
-    Node* node;
-    QueueState state;
-
-    do
-    {
-      size_t idx = consumer.consumer_next_idx_ & consumer.idx_mask_;
-      node = this->nodes_[queue_idx][idx];
-      version = node->version_.load(std::memory_order_acquire);
-      r = static_cast<Derived&>(*this).skip(idx, queue_idx, *node, version, consumer);
-      if (ConsumeReturnCode::Consumed == r)
-        return r;
-
-      state = this->state_.load(std::memory_order_acquire);
-    } while (state == QueueState::Running && r == ConsumeReturnCode::NothingToConsume);
-    if (state == QueueState::Stopped)
-      return ConsumeReturnCode::Stopped;
-
-    return r;
   }
 
   template <class C>
@@ -427,3 +281,4 @@ public:
     }
   }
 };
+#endif

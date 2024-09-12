@@ -15,6 +15,7 @@
  */
 
 #include "common_test_utils.h"
+#include "detail/common.h"
 #include "detail/consumer.h"
 #include <assert.h>
 #include <catch2/catch_all.hpp>
@@ -31,7 +32,6 @@ TEST_CASE("SPSC consumer iterator functional test")
     constexpr bool blocking = true;
     ConsumerBlocking<Queue> c(q);
     ProducerBlocking<Queue> p(q);
-    q.start();
 
     {
       auto r = p.emplace(1u, 1u, 100.0, 'A');
@@ -44,17 +44,22 @@ TEST_CASE("SPSC consumer iterator functional test")
       CHECK(ProduceReturnCode::Published == r);
     }
 
-    {
-      int i = 1;
-      auto it = c.cbegin();
-      while (it != c.cend() && it->id != 3)
+    REQUIRE_THROWS(
+      [&]()
       {
-        int v = it->id;
-        CHECK(v == i);
-        ++i;
-        ++it;
-      }
-    }
+        int i = 1;
+        auto it = c.cbegin();
+        while (it != c.cend())
+        {
+          int v = it->id;
+          CHECK(v == i);
+          if (v == 3)
+            c.halt();
+          ++i;
+          ++it;
+        }
+      }(),
+      ConsumerHaltedExp());
   }
 
   SECTION("Non-Blocking consumer")
@@ -65,7 +70,6 @@ TEST_CASE("SPSC consumer iterator functional test")
     constexpr bool blocking = true;
     ConsumerNonBlocking<Queue> c(q);
     ProducerBlocking<Queue> p(q);
-    q.start();
 
     {
       auto r = p.emplace(1u, 1u, 100.0, 'A');

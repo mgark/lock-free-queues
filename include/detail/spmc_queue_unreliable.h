@@ -37,6 +37,7 @@ public:
   using Base = SPMCMulticastQueueBase<T, SPMCMulticastQueueUnreliable, _MAX_CONSUMER_N_,
                                       _MAX_PRODUCER_N_, _BATCH_NUM_, 0, true, Allocator, VersionType>;
   using Base::_synchronized_consumer_;
+  using Base::CPU_PAUSE_N;
 
 private:
   static_assert(std::is_trivially_copyable_v<T>);
@@ -107,10 +108,6 @@ public:
   using type = typename Base::type;
   using Base::Base;
   using Base::consume_blocking;
-  using Base::is_running;
-  using Base::is_stopped;
-  using Base::start;
-  using Base::stop;
 
   template <class Consumer>
   size_t acquire_consumer_idx(Consumer& c)
@@ -143,11 +140,6 @@ public:
   template <class Producer, class... Args, bool blocking = Producer::blocking_v>
   ProduceReturnCode emplace(size_t original_idx, Producer& producer, Args&&... args)
   {
-    if (!is_running())
-    {
-      return ProduceReturnCode::NotRunning;
-    }
-
     // the whole point for the producer is just keep publishing to the new
     // slots regardless of where consumers are or at what state they are
 

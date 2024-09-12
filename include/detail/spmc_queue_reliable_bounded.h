@@ -17,7 +17,6 @@
 #pragma once
 #include "detail/common.h"
 #include "detail/producer.h"
-#include "detail/single_bit_reuse.h"
 #include "detail/spin_lock.h"
 #include "spmc_queue_base.h"
 #include <atomic>
@@ -27,6 +26,7 @@
 #include <cstdint>
 #include <emmintrin.h>
 #include <limits>
+#include <stdexcept>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -45,6 +45,7 @@ public:
   using Base::_cache_line_num_;
   using Base::_item_per_prefetch_num_;
   using Base::_remap_index_;
+  using Base::CPU_PAUSE_N;
   // using Base::_reuse_single_bit_from_object_;
   using Base::_spsc_;
   using Base::_synchronized_consumer_;
@@ -157,6 +158,7 @@ private:
     struct alignas(_CACHE_PREFETCH_SIZE_) ProducerProgress
     {
       std::atomic<size_t> idx;
+      std::atomic<bool> halt;
     };
 
     alignas(_CACHE_PREFETCH_SIZE_) std::atomic<size_t> producer_idx_;
@@ -232,11 +234,6 @@ public:
   using ProducerTicket = typename Base::ProducerTicket;
   using type = typename Base::type;
   using Base::Base;
-  using Base::consume_blocking;
-  using Base::is_running;
-  using Base::is_stopped;
-  using Base::start;
-  using Base::stop;
 
   SPMCMulticastQueueReliableBounded(std::size_t N, const Allocator& alloc = Allocator())
     : Base(N, alloc), next_max_consumer_id_(0), next_max_producer_id_(0)
@@ -272,6 +269,17 @@ public:
     return producer_ctx_.aquire_first_idx(p);
   }
 
+  bool no_producers() const
+  {
+    if (0 == this->next_max_producer_id_.load(std::memory_order_acquire))
+    {
+      Spinlock::scoped_lock autolock(this->slow_path_guard_);
+      return 0 == this->next_max_producer_id_.load(std::memory_order_acquire);
+    }
+
+    return false;
+  }
+
   template <class Consumer>
   ConsumerTicket attach_consumer(Consumer& c)
   {
@@ -284,12 +292,12 @@ public:
         if (locker.compare_exchange_strong(is_locked, true, std::memory_order_acq_rel, std::memory_order_relaxed))
         {
           bool producer_need_to_accept = true;
-          if (!is_running())
+          if (0 == this->next_max_producer_id_.load(std::memory_order_acquire))
           {
             Spinlock::scoped_lock autolock(this->slow_path_guard_);
-            if (!is_running())
+            if (0 == this->next_max_producer_id_.load(std::memory_order_acquire))
             {
-              // if the queue has not started, then let's assign the next read idx by ourselves!
+              // if the queue does not have producers attached, then let's assign the next read idx by ourselves!
               if constexpr (_synchronized_consumer_)
               {
                 if constexpr (_MAX_CONSUMER_N_ == 1)
@@ -305,17 +313,39 @@ public:
               }
               else
               {
-                if constexpr (_MAX_CONSUMER_N_ == 1)
+                size_t next_consume_idx = this->get_producer_idx();
+                if constexpr (_versionless_)
                 {
-                  this->consumer_ctx_.consumers_progress_[0].idx.store(0, std::memory_order_release);
-                  this->consumer_ctx_.consumers_progress_[0].previous_version.store(
-                    version_type{}, std::memory_order_release);
+                  this->consumer_ctx_.consumers_progress_.at(i).idx.store(next_consume_idx, std::memory_order_release);
                 }
                 else
                 {
-                  this->consumer_ctx_.consumers_progress_.at(i).idx.store(0, std::memory_order_release);
-                  this->consumer_ctx_.consumers_progress_.at(i).previous_version.store(
-                    version_type{}, std::memory_order_release);
+                  if constexpr (_binary_version_)
+                  {
+                    version_type previous_version;
+                    size_t queue_version = next_consume_idx / this->capacity();
+                    previous_version = (queue_version & 1) ? version_type{1u} : version_type{};
+
+                    if constexpr (_MAX_CONSUMER_N_ == 1)
+                    {
+                      this->consumer_ctx_.consumers_progress_[0].idx.store(
+                        next_consume_idx, std::memory_order_release);
+                      this->consumer_ctx_.consumers_progress_[0].previous_version.store(
+                        previous_version, std::memory_order_release);
+                    }
+                    else
+                    {
+                      this->consumer_ctx_.consumers_progress_[i].idx.store(
+                        next_consume_idx, std::memory_order_release);
+                      this->consumer_ctx_.consumers_progress_[i].previous_version.store(
+                        previous_version, std::memory_order_release);
+                    }
+                  }
+                  else
+                  {
+                    static constexpr char error_msg[]{"does not support this producer type"};
+                    fail_to_compile<error_msg>();
+                  }
                 }
               }
               producer_need_to_accept = false;
@@ -348,12 +378,12 @@ public:
 
           // let's wait for producer to consumer our positions from which we
           // shall start safely consuming
-          size_t stopped;
+          size_t nobody_to_accept_consumer;
           size_t consumer_next_idx;
           version_type previous_version;
           do
           {
-            stopped = is_stopped();
+            nobody_to_accept_consumer = no_producers();
             if constexpr (_MAX_CONSUMER_N_ == 1)
             {
               consumer_next_idx = this->consumer_ctx_.consumers_progress_[0].idx.load(std::memory_order_acquire);
@@ -367,9 +397,9 @@ public:
               previous_version =
                 this->consumer_ctx_.consumers_progress_.at(i).previous_version.load(std::memory_order_relaxed);
             }
-          } while (!stopped && consumer_next_idx >= CONSUMER_JOIN_INPROGRESS);
+          } while (!nobody_to_accept_consumer && consumer_next_idx >= CONSUMER_JOIN_INPROGRESS);
 
-          if (stopped)
+          if (nobody_to_accept_consumer && producer_need_to_accept)
           {
             detach_consumer(i);
             return {0,
@@ -378,7 +408,7 @@ public:
                     this->items_per_batch_,
                     0,
                     0,
-                    ConsumerAttachReturnCode::Stopped};
+                    ConsumerAttachReturnCode::NoProducers};
           }
 
           return {this->size(), i, consumer_next_idx, this->items_per_batch_, 0, previous_version, ConsumerAttachReturnCode::Attached};
@@ -511,8 +541,34 @@ public:
   }
 
   template <class Producer>
+  void halt_producer(Producer& p)
+  {
+    Spinlock::scoped_lock autolock(this->slow_path_guard_);
+    std::atomic<bool>& locker = this->producer_ctx_.producer_registry_.at(p.producer_id_);
+    bool is_locked = locker.load(std::memory_order_acquire);
+    if (is_locked)
+    {
+      auto& progress = this->producer_ctx_.producer_progress_.at(p.producer_id_);
+      progress.halt.store(true, std::memory_order_relaxed);
+    }
+    else
+    {
+      throw std::runtime_error("producer does not exist - unable to halt");
+    }
+  }
+
+  template <class Producer>
+  bool is_halted(const Producer& p) const
+  {
+    // that is only can by called by an attached and live producer so no extra protection is required!
+    const auto& progress = this->producer_ctx_.producer_progress_.at(p.producer_id_);
+    return progress.halt.load(std::memory_order_relaxed);
+  }
+
+  template <class Producer>
   ProducerTicket attach_producer(Producer& p)
   {
+    Spinlock::scoped_lock autolock(this->slow_path_guard_);
     for (size_t i = 0; i < _MAX_PRODUCER_N_; ++i)
     {
       std::atomic<bool>& locker = this->producer_ctx_.producer_registry_.at(i);
@@ -520,21 +576,12 @@ public:
       if (!is_locked)
       {
         this->producer_ctx_.producer_progress_.at(i).idx.store(PRODUCER_IS_WELCOME, std::memory_order_release);
+        this->producer_ctx_.producer_progress_.at(i).halt.store(false, std::memory_order_release);
         if (locker.compare_exchange_strong(is_locked, true, std::memory_order_release, std::memory_order_relaxed))
         {
           {
-            Spinlock::scoped_lock autolock(this->slow_path_guard_);
             auto latest_max_producer_id = this->next_max_producer_id_.load(std::memory_order_relaxed);
             this->next_max_producer_id_.store(std::max(i + 1, latest_max_producer_id), std::memory_order_release);
-          }
-
-          // let's wait for producer to consumer our positions from which we
-          // shall start safely consuming
-          size_t stopped = is_stopped();
-          if (stopped)
-          {
-            detach_producer(i);
-            return {0, 0, ProducerAttachReturnCode::Stopped};
           }
 
           return {i, this->items_per_batch_, ProducerAttachReturnCode::Attached};
@@ -548,6 +595,7 @@ public:
 
   bool detach_producer(size_t producer_id)
   {
+    Spinlock::scoped_lock autolock(this->slow_path_guard_);
     std::atomic<bool>& locker = this->producer_ctx_.producer_registry_.at(producer_id);
     bool is_locked = locker.load(std::memory_order_acquire);
     if (is_locked)
@@ -561,7 +609,6 @@ public:
         //  so unlocked the same consumer on multiple threads is really a bad
         //  idea
 
-        Spinlock::scoped_lock autolock(this->slow_path_guard_);
         auto new_max_producer_id = _MAX_PRODUCER_N_ - 1;
         while (new_max_producer_id >= 0 && new_max_producer_id != std::numeric_limits<size_t>::max())
         {
@@ -605,11 +652,6 @@ public:
   template <class Producer, class... Args, bool blocking = Producer::blocking_v>
   ProduceReturnCode emplace(size_t original_idx, Producer& producer, Args&&... args)
   {
-    if (!is_running())
-    {
-      return ProduceReturnCode::NotRunning;
-    }
-
     size_t min_next_consumer_idx = producer.get_min_next_consumer_idx_cached();
     bool no_active_consumers =
       min_next_consumer_idx == CONSUMER_IS_WELCOME; // TODO: fix for synchronized consumers!
@@ -620,13 +662,9 @@ public:
 
     bool consumers_pending_attach =
       this->consumer_ctx_.consumers_pending_attach_.load(std::memory_order_acquire);
+
     while (no_free_slot || consumers_pending_attach)
     {
-      if (!is_running())
-      {
-        return ProduceReturnCode::NotRunning;
-      }
-
       size_t min_next_consumer_idx_local;
       size_t min_next_producer_idx_local = original_idx;
       if constexpr (_MAX_CONSUMER_N_ > 1)
@@ -683,6 +721,9 @@ public:
       consumers_pending_attach = this->consumer_ctx_.consumers_pending_attach_.load(std::memory_order_acquire);
       if (no_free_slot)
       {
+        if (producer.is_halted())
+          throw ProducerHaltedExp();
+
         unroll<_CPU_PAUSE_N_>([]() { _mm_pause(); });
       }
     }
@@ -766,138 +807,11 @@ public:
     return min_next_producer_idx_local;
   }
 
-  template <class C, class F>
-  ConsumeReturnCode consume_by_func(size_t idx, size_t& queue_idx, Node& node, auto version,
-                                    C& consumer, F&& f) requires(!_versionless_ && _binary_version_)
-  {
-
-    if (consumer.previous_version_ ^ version)
-    {
-      std::forward<F>(f)(node.storage_);
-      if (idx + 1u == this->n_)
-      { // need to
-        // rollover
-        consumer.previous_version_ = version;
-      }
-
-      ++consumer.consumer_next_idx_;
-      if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
-      {
-        if constexpr (_MAX_CONSUMER_N_ == 1)
-        {
-          this->consumer_ctx_.consumers_progress_[0].idx.store(consumer.consumer_next_idx_, std::memory_order_release);
-        }
-        else
-        {
-          this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
-            consumer.consumer_next_idx_, std::memory_order_release);
-        }
-        consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
-      }
-
-      return ConsumeReturnCode::Consumed;
-    }
-    else
-    {
-      return ConsumeReturnCode::NothingToConsume;
-    }
-  }
-
-  template <class C, class F>
-  ConsumeReturnCode consume_by_func(size_t idx, size_t& queue_idx, Node& node, version_type version,
-                                    version_type expected_version, C& consumer,
-                                    F&& f) requires(!_versionless_ and !_binary_version_)
-  {
-    if (expected_version == version)
-    {
-      std::forward<F>(f)(node.storage_);
-      if constexpr (_MAX_CONSUMER_N_ == 1)
-      {
-        this->consumer_ctx_.consumers_progress_[0].idx.store(NEXT_CONSUMER_IDX_NEEDED, std::memory_order_release);
-      }
-      else
-      {
-        this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
-          NEXT_CONSUMER_IDX_NEEDED, std::memory_order_release);
-      }
-      consumer.consumer_next_idx_ = NEXT_CONSUMER_IDX_NEEDED;
-      return ConsumeReturnCode::Consumed;
-    }
-    else
-    {
-      return ConsumeReturnCode::NothingToConsume;
-    }
-  }
-
-  template <class C, class F>
-  ConsumeReturnCode consume_by_func(size_t idx, size_t& queue_idx, Node& node, C& consumer,
-                                    F&& f) requires(_versionless_ and _synchronized_consumer_)
-  {
-    size_t producer_idx = consumer.get_min_next_cached_producer_idx();
-    if (producer_idx <= idx)
-    {
-      // let's try to pull the latest min producer idx
-      producer_idx = calc_min_next_producer_idx();
-      consumer.set_min_next_cached_producer_idx(producer_idx);
-      if (producer_idx <= idx)
-      {
-        return ConsumeReturnCode::NothingToConsume;
-      }
-    }
-
-    std::forward<F>(f)(node.storage_);
-    if constexpr (_MAX_CONSUMER_N_ == 1)
-    {
-      this->consumer_ctx_.consumers_progress_[0].idx.store(NEXT_CONSUMER_IDX_NEEDED, std::memory_order_release);
-    }
-    else
-    {
-      this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
-        NEXT_CONSUMER_IDX_NEEDED, std::memory_order_release);
-    }
-    consumer.consumer_next_idx_ = NEXT_CONSUMER_IDX_NEEDED;
-    return ConsumeReturnCode::Consumed;
-  }
-
-  template <class C, class F>
-  ConsumeReturnCode consume_by_func(size_t idx, size_t& queue_idx, Node& node, C& consumer,
-                                    F&& f) requires(_versionless_ and not _synchronized_consumer_)
-  {
-    size_t producer_idx = consumer.get_min_next_cached_producer_idx();
-    if (producer_idx <= idx)
-    {
-      // let's try to pull the latest min producer idx
-      producer_idx = calc_min_next_producer_idx();
-      consumer.set_min_next_cached_producer_idx(producer_idx);
-      if (producer_idx <= idx)
-      {
-        return ConsumeReturnCode::NothingToConsume;
-      }
-    }
-
-    std::forward<F>(f)(node.storage_);
-    ++consumer.consumer_next_idx_;
-    if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
-    {
-      if constexpr (_MAX_CONSUMER_N_ == 1)
-      {
-        this->consumer_ctx_.consumers_progress_[0].idx.store(consumer.consumer_next_idx_, std::memory_order_release);
-      }
-      else
-      {
-        this->consumer_ctx_.consumers_progress_[consumer.consumer_id_].idx.store(
-          consumer.consumer_next_idx_, std::memory_order_release);
-      }
-
-      consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
-    }
-
-    return ConsumeReturnCode::Consumed;
-  }
-
   template <class C>
-  const T* peek(size_t idx, Node& node, auto version, C& consumer) requires(!_versionless_ and _binary_version_)
+  const T* peek(Node& node, size_t idx, C& consumer) requires(!_versionless_ and _binary_version_)
   {
+    bool halt = false;
+    VersionType version = node.version_.load(std::memory_order_acquire);
     if (consumer.previous_version_ ^ version)
     {
       if (idx + 1u == this->n_)
@@ -910,62 +824,96 @@ public:
     }
     else
     {
+      if constexpr (C::blocking_v)
+      {
+        if (consumer.is_halted()) [[unlikely]]
+        {
+          // for blocking consumers the only return value is a valid pointer so
+          // to avoid been stuck in special edge case when producers don't publish
+          // we must throw an exception
+          throw ConsumerHaltedExp();
+        }
+      }
+
       return nullptr;
     }
   }
 
   template <class C>
-  const T* peek(Node& node, auto version, auto expected_version,
-                C& consumer) requires(!_versionless_ and !_binary_version_)
+  const T* peek(Node& node, auto expected_version, C& consumer) requires(!_versionless_ and !_binary_version_)
   {
-    if (expected_version == version)
+    VersionType version = node.version_.load(std::memory_order_acquire);
+    if (expected_version != version)
     {
-      return reinterpret_cast<const T*>(node.storage_);
-    }
-    else
-    {
+      if constexpr (C::blocking_v)
+      {
+        if (consumer.is_halted()) [[unlikely]]
+        {
+          // for blocking consumers the only return value is a valid pointer so
+          // to avoid been stuck in special edge case when producers don't publish
+          // we must throw an exception
+          throw ConsumerHaltedExp();
+        }
+      }
+
       return nullptr;
     }
+
+    return reinterpret_cast<const T*>(node.storage_);
   }
 
   template <class C>
-  const T* peek(Node& node, size_t idx, C& consumer) requires(_versionless_&& _batch_consumption_enabled_)
+  const T* peek(Node& node, size_t idx, size_t wrapped_idx, C& consumer) requires(_versionless_&& _batch_consumption_enabled_)
   {
     if (consumer.batch_ctx_.batch_buffer_idx_ < C::BatchContext::_batch_buffer_size_)
     {
       return std::launder(reinterpret_cast<T*>(
-        &consumer.batch_ctx_.batch_buffer_[(consumer.batch_ctx_.batch_buffer_idx_++) * sizeof(Node)]));
-    }
-
-    size_t producer_idx = consumer.get_min_next_cached_producer_idx();
-    if (producer_idx <= idx)
-    {
-      // let's try to pull the latest min producer idx
-      producer_idx = calc_min_next_producer_idx();
-      consumer.set_min_next_cached_producer_idx(producer_idx);
-      if (producer_idx <= idx)
-      {
-        return nullptr;
-      }
-    }
-
-    size_t items_ready_num = producer_idx - idx;
-    if (items_ready_num >= C::BatchContext::_batch_buffer_size_)
-    {
-      std::memcpy(&consumer.batch_ctx_.batch_buffer_, &node,
-                  C::BatchContext::_batch_buffer_size_ * sizeof(Node));
-      consumer.batch_ctx_.batch_buffer_idx_ = 0;
-      return std::launder(reinterpret_cast<T*>(
-        &consumer.batch_ctx_.batch_buffer_[(consumer.batch_ctx_.batch_buffer_idx_++) * sizeof(Node)]));
+        &consumer.batch_ctx_.batch_buffer_[(consumer.batch_ctx_.batch_buffer_idx_) * sizeof(Node)]));
     }
     else
     {
-      return reinterpret_cast<const T*>(node.storage_);
+      size_t producer_idx = consumer.get_min_next_cached_producer_idx();
+      if (producer_idx <= idx)
+      {
+        // let's try to pull the latest min producer idx
+        producer_idx = calc_min_next_producer_idx();
+        consumer.set_min_next_cached_producer_idx(producer_idx);
+        if (producer_idx <= idx)
+        {
+          if constexpr (C::blocking_v)
+          {
+            if (consumer.is_halted()) [[unlikely]]
+            {
+              // for blocking consumers the only return value is a valid pointer so
+              // to avoid been stuck in special edge case when producers don't publish
+              // we must throw an exception
+              throw ConsumerHaltedExp();
+            }
+          }
+
+          return nullptr;
+        }
+      }
+
+      size_t items_ready_num = std::min(producer_idx - idx, this->capacity() - wrapped_idx + 1);
+      if (items_ready_num >= C::BatchContext::_batch_buffer_size_)
+      {
+        std::memcpy(&consumer.batch_ctx_.batch_buffer_, &node,
+                    C::BatchContext::_batch_buffer_size_ * sizeof(Node));
+        consumer.batch_ctx_.batch_buffer_idx_ = 0;
+        return std::launder(reinterpret_cast<T*>(
+          &consumer.batch_ctx_.batch_buffer_[(consumer.batch_ctx_.batch_buffer_idx_) * sizeof(Node)]));
+      }
+      else
+      {
+        return reinterpret_cast<const T*>(node.storage_);
+      }
     }
   }
 
   template <class C>
-  const T* peek(Node& node, size_t idx, C& consumer) requires(_versionless_ && not _batch_consumption_enabled_)
+  const T* peek(Node& node, size_t idx, size_t wraped_idx,
+                C& consumer) requires(_versionless_ && not _batch_consumption_enabled_)
   {
     size_t producer_idx = consumer.get_min_next_cached_producer_idx();
     if (producer_idx <= idx)
@@ -975,6 +923,17 @@ public:
       consumer.set_min_next_cached_producer_idx(producer_idx);
       if (producer_idx <= idx)
       {
+        if constexpr (C::blocking_v)
+        {
+          if (consumer.is_halted()) [[unlikely]]
+          {
+            // for blocking consumers the only return value is a valid pointer so
+            // to avoid been stuck in special edge case when producers don't publish
+            // we must throw an exception
+            throw ConsumerHaltedExp();
+          }
+        }
+
         return nullptr;
       }
     }
@@ -983,8 +942,8 @@ public:
   }
 
   template <class C>
-  ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node, auto version,
-                         C& consumer) requires(!_versionless_ && _binary_version_)
+  void skip(size_t idx, size_t& queue_idx, Node& node, auto version,
+            C& consumer) requires(!_versionless_ && _binary_version_)
   {
     ++consumer.consumer_next_idx_;
     if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
@@ -1000,13 +959,11 @@ public:
       }
       consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
     }
-
-    return ConsumeReturnCode::Consumed;
   }
 
   template <class C>
-  ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node, version_type version,
-                         version_type expected_version, C& consumer) requires(!_versionless_ and !_binary_version_)
+  void skip(size_t idx, size_t& queue_idx, Node& node, version_type version,
+            version_type expected_version, C& consumer) requires(!_versionless_ and !_binary_version_)
   {
     if constexpr (_MAX_CONSUMER_N_ == 1)
     {
@@ -1019,12 +976,10 @@ public:
     }
 
     consumer.consumer_next_idx_ = NEXT_CONSUMER_IDX_NEEDED;
-    return ConsumeReturnCode::Consumed;
   }
 
   template <class C>
-  ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node,
-                         C& consumer) requires(_versionless_ and _synchronized_consumer_)
+  void skip(size_t idx, size_t& queue_idx, Node& node, C& consumer) requires(_versionless_ and _synchronized_consumer_)
   {
     if constexpr (_MAX_CONSUMER_N_ == 1)
     {
@@ -1036,14 +991,16 @@ public:
         NEXT_CONSUMER_IDX_NEEDED, std::memory_order_release);
     }
     consumer.consumer_next_idx_ = NEXT_CONSUMER_IDX_NEEDED;
-    return ConsumeReturnCode::Consumed;
   }
 
-  // TODO: need to consider if skip shall return anything at all!
   template <class C>
-  ConsumeReturnCode skip(size_t idx, size_t& queue_idx, Node& node,
-                         C& consumer) requires(_versionless_ and not _synchronized_consumer_)
+  void skip(size_t idx, size_t& queue_idx, Node& node, C& consumer) requires(_versionless_ and not _synchronized_consumer_)
   {
+    if constexpr (_batch_consumption_enabled_)
+    {
+      if (consumer.batch_ctx_.batch_buffer_idx_ < C::BatchContext::_batch_buffer_size_)
+        ++consumer.batch_ctx_.batch_buffer_idx_;
+    }
 
     ++consumer.consumer_next_idx_;
     if (consumer.consumer_next_idx_ == consumer.next_checkout_point_idx_)
@@ -1059,7 +1016,5 @@ public:
       }
       consumer.next_checkout_point_idx_ = consumer.consumer_next_idx_ + this->items_per_batch_;
     }
-
-    return ConsumeReturnCode::Consumed;
   }
 };
